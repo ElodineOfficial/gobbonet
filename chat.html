@@ -2969,6 +2969,174 @@ function getCardSamplerParams(card) {
 }
 
 /**
+ * Family-aware STOP STRINGS.
+ *
+ * Why this exists: '[INST]' / '[/INST]' are NOT special tokens in Mistral's
+ * format — they're plain text. When a model leaks them into a visible reply
+ * ("Tekken junk"), it means generation ran PAST the turn boundary because the
+ * EOS the model emits doesn't match what llama-server stops on. This is the
+ * classic roleplay-merge artifact (mismatched/wrong EOS in the GGUF). The
+ * embedded template can be perfectly correct and the model still runs on.
+ *
+ * SillyTavern's universal fix is custom stop strings: the instruct template's
+ * turn delimiters double as stopping strings, so a runaway gets cut at the
+ * first delimiter regardless of EOS health. We mirror that here.
+ *
+ * SAFETY: every string below is a TURN DELIMITER that must never appear inside
+ * a valid assistant reply. Stopping on them is a pure backstop — it only fires
+ * when the model misbehaves, so it can't truncate legitimate output and can't
+ * regress models that already stop cleanly (the server still honors real EOS
+ * first). Delimiters are stripped from the output, not echoed.
+ *
+ * We deliberately leave the delicate reasoning formats (harmony / deepseek)
+ * to the server's own parsing and add no extra stops for them, since their
+ * channel/think markers are consumed mid-turn, not at the boundary.
+ */
+const STOP_STRINGS_BY_FAMILY = {
+  // Mistral V1/V2/V3/Tekken/V7 — the family that leaks "[INST]" junk.
+  mistral:    ['</s>', '[INST]', '[/INST]'],
+  // Llama 3.x header format (also covers llama2-lineage [INST] merges).
+  llama:      ['<|eot_id|>', '<|start_header_id|>', '[INST]', '[/INST]'],
+  // ChatML and friends.
+  qwen:       ['<|im_end|>', '<|im_start|>'],
+  glm:        ['<|im_end|>', '<|im_start|>', '<|user|>', '<|assistant|>'],
+  phi:        ['<|im_end|>', '<|im_start|>', '<|end|>'],
+  moonshot:   ['<|im_end|>', '<|im_user|>', '<|im_assistant|>'],
+  // Gemma turn markers (thinking is channel-based *within* the turn, so these
+  // boundary markers don't clip reasoning).
+  gemma:      ['<end_of_turn>', '<start_of_turn>'],
+  // Cohere Command-R.
+  'command-r':['<|END_OF_TURN_TOKEN|>', '<|START_OF_TURN_TOKEN|>'],
+  // tulu uses the same <|...|> role markers as its base.
+  tulu:       ['<|user|>', '<|assistant|>', '<|system|>'],
+  // harmony (gpt-oss), deepseek, granite, custom: intentionally no extra stops.
+};
+
+/**
+ * Returns { stop: [...] } for the active model's family, or {} when we have no
+ * safe delimiters to add (custom / reasoning formats). Spread into the request
+ * body alongside the sampler params.
+ */
+function getStopStrings() {
+  const fam = (activeModel && activeModel.family) ? String(activeModel.family).toLowerCase() : '';
+  const stops = STOP_STRINGS_BY_FAMILY[fam];
+  return (stops && stops.length) ? { stop: stops.slice() } : {};
+}
+
+/**
+ * gobboDiag() — GROUND-TRUTH PROMPT DIAGNOSTIC.
+ *
+ * Eyeballing model output can't tell us what framing the model actually
+ * received — only the server knows that. This pulls the two facts that settle
+ * any "wrong template / garbage output" question:
+ *
+ *   1. GET  /props          -> the chat template llama-server actually loaded
+ *                              (plus the tool-use template, if any).
+ *   2. POST /apply-template -> the EXACT prompt string the model is fed for the
+ *                              current conversation (formats, does not infer).
+ *
+ * If /apply-template shows the turns wrapped in '[INST]' but the model's own
+ * output uses '<|user|>' / '<|assistant|>', the embedded template and the
+ * model's training disagree — that's the bug, proven rather than guessed.
+ *
+ * Run it from the browser console (F12) after a bad reply:  gobboDiag()
+ * The report is printed and copied to the clipboard when possible.
+ */
+async function gobboDiag() {
+  const out = { when: new Date().toISOString(), model: null, family: null,
+                stop: null, props: null, appliedPrompt: null, notes: [] };
+
+  if (!IS_SERVED) {
+    console.warn('[gobboDiag] Not served over http — open via the LAN/server URL, not file://. Cannot reach llama-server.');
+    return out;
+  }
+
+  out.model  = (activeModel && activeModel.name)   || _currentModelFile || 'unknown';
+  out.family = (activeModel && activeModel.family) || 'unknown';
+  out.stop   = getStopStrings().stop || [];
+
+  // 1) What template did the server actually load?
+  try {
+    const r = await fetch(LLAMA_URL + '/props', { cache: 'no-store' });
+    if (r.ok) {
+      const p = await r.json();
+      out.props = {
+        chat_template:          p.chat_template || '(none reported)',
+        chat_template_tool_use: p.chat_template_tool_use || null,
+        bos: (p.bos_token ?? (p.default_generation_settings && p.default_generation_settings.bos_token)) ?? null,
+        eos: (p.eos_token ?? (p.default_generation_settings && p.default_generation_settings.eos_token)) ?? null,
+        n_ctx: (p.default_generation_settings && (p.default_generation_settings.n_ctx ?? p.default_generation_settings.n_ctx_train)) ?? null
+      };
+    } else {
+      out.notes.push('/props returned ' + r.status);
+    }
+  } catch (e) {
+    out.notes.push('/props fetch failed: ' + e.message);
+  }
+
+  // 2) What exact prompt does the current conversation produce?
+  try {
+    const thread = getActiveThread();
+    const card   = getActiveCard();
+    if (thread) {
+      const { apiMessages } = await buildContextMessages(thread, card);
+      const r = await fetch(LLAMA_URL + '/apply-template', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: apiMessages })
+      });
+      if (r.ok) {
+        const j = await r.json();
+        out.appliedPrompt = (typeof j.prompt === 'string') ? j.prompt : JSON.stringify(j);
+      } else {
+        out.notes.push('/apply-template returned ' + r.status + ' (older build? then use /props template above)');
+      }
+    } else {
+      out.notes.push('no active thread — open a chat first to capture an applied prompt');
+    }
+  } catch (e) {
+    out.notes.push('/apply-template fetch failed: ' + e.message);
+  }
+
+  // ---- pretty report ----
+  const tmpl = out.props && out.props.chat_template ? out.props.chat_template : '(unknown)';
+  const looksMistral = /\[INST\]|\[SYSTEM_PROMPT\]|\[AVAILABLE_TOOLS\]/.test(tmpl) || (out.appliedPrompt && /\[INST\]/.test(out.appliedPrompt));
+  const looksPipe    = /<\|user\|>|<\|assistant\|>|<\|system\|>/.test(tmpl) || (out.appliedPrompt && /<\|user\|>|<\|assistant\|>/.test(out.appliedPrompt));
+  const looksChatML  = /<\|im_start\|>/.test(tmpl) || (out.appliedPrompt && /<\|im_start\|>/.test(out.appliedPrompt));
+  let verdict = 'inconclusive — compare the applied framing below against what the model emits';
+  if (looksMistral && !looksPipe && !looksChatML) verdict = 'server is applying MISTRAL [INST] framing';
+  else if (looksChatML) verdict = 'server is applying CHATML <|im_start|> framing';
+  else if (looksPipe)   verdict = 'server is applying <|role|> (Zephyr/Tulu-style) framing';
+
+  console.log('%c=== gobboDiag ===', 'font-weight:bold');
+  console.log('model:  ' + out.model + '   family(client): ' + out.family);
+  console.log('stop strings sent: ' + JSON.stringify(out.stop));
+  console.log('verdict: ' + verdict);
+  if (out.props) {
+    console.log('--- /props ---');
+    console.log('bos=' + out.props.bos + '  eos=' + out.props.eos + '  n_ctx=' + out.props.n_ctx);
+    console.log('chat_template (server-loaded):\n' + tmpl);
+    if (out.props.chat_template_tool_use) console.log('chat_template_tool_use present (tools variant differs).');
+  }
+  if (out.appliedPrompt != null) {
+    console.log('--- /apply-template (EXACT prompt fed to model) ---');
+    console.log(out.appliedPrompt);
+  }
+  if (out.notes.length) console.log('notes: ' + out.notes.join(' | '));
+
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(out, null, 2));
+    console.log('(full report copied to clipboard)');
+  } catch (_) { /* clipboard may be blocked over plain http — report is above */ }
+
+  return out;
+}
+// Expose for console use and log a one-time hint.
+if (typeof window !== 'undefined') {
+  window.gobboDiag = gobboDiag;
+}
+
+/**
  * Tokenize banned phrases and build a logit_bias object for the API request.
  * Tries the llama.cpp /tokenize endpoint; if unavailable, skips silently.
  *
@@ -4381,10 +4549,14 @@ async function sendMessage(overrideContent) {
 
   try {
     const logitBiasParams = await buildLogitBias(card);
+    const _stopParams = getStopStrings();
+    console.log('[gen] family=' + ((activeModel && activeModel.family) || 'unknown') +
+                ' stop=' + JSON.stringify(_stopParams.stop || []) +
+                '  (run gobboDiag() to dump the exact prompt the model receives)');
     const resp = await privacyFetch(LLAMA_URL + '/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'local', messages: apiMessages, stream: true, max_tokens: -1, ...getCardSamplerParams(card), ...logitBiasParams }),
+      body: JSON.stringify({ model: 'local', messages: apiMessages, stream: true, max_tokens: -1, ...getCardSamplerParams(card), ..._stopParams, ...logitBiasParams }),
       signal: abortController.signal
     });
 
@@ -4783,10 +4955,14 @@ async function regenerateFromThread(options = {}) {
 
   try {
     const logitBiasParams = await buildLogitBias(card);
+    const _stopParams = getStopStrings();
+    console.log('[gen] family=' + ((activeModel && activeModel.family) || 'unknown') +
+                ' stop=' + JSON.stringify(_stopParams.stop || []) +
+                '  (run gobboDiag() to dump the exact prompt the model receives)');
     const resp = await privacyFetch(LLAMA_URL + '/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'local', messages: apiMessages, stream: true, max_tokens: -1, ...getCardSamplerParams(card), ...logitBiasParams }),
+      body: JSON.stringify({ model: 'local', messages: apiMessages, stream: true, max_tokens: -1, ...getCardSamplerParams(card), ..._stopParams, ...logitBiasParams }),
       signal: abortController.signal
     });
     if (!resp.ok) throw new Error(`llama-server returned ${resp.status}: ${resp.statusText}`);
