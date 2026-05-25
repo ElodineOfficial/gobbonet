@@ -194,7 +194,15 @@ The model file is probably in the wrong place. Make sure every `.gguf` file is i
 Open **Task Manager** (press Ctrl + Shift + Esc), find anything labeled **"Windows PowerShell,"** and end those tasks. Then run `launch.bat` again. This clears out a stuck background process.
 
 ---
+## Known bugs
+We like to be upfront about what's broken. These two are confirmed, and we're working to fix them ASAP. We'll update this section as we squash them.
 
+**Logit bias is broken**: (this is what powers "banned words"). 
+The banned-words feature — the one that's supposed to discourage specific words from showing up — relies on logit bias under the hood, and logit bias isn't working right now. Banning a word won't reliably keep it out of replies. For the moment, treat the feature as non-functional rather than just hit-or-miss. (You'll see this flagged in the feature list too.)
+**Some models using the "Tekken" tokenizer misbehave.** 
+A handful of models are built on the Tekken tokenizer, and those don't run correctly yet — you may see scrambled or garbled output, odd spacing, or wrong special tokens/formatting. If a model is acting strange in a way that looks like jumbled text, this is the likely cause. Switch to a different model in the meantime until we ship a fix.
+
+---
 ## Quick reference
 
 | I want to… | Do this |
