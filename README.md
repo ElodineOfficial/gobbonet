@@ -166,7 +166,7 @@ You can set a new one. Either delete the hidden file named `.gobbonet-secret` fr
 ```
 launch.bat reset-password
 ```
-It will ask you to set a fresh password.
+It will ask you to set a fresh password. Restart your computer after this or it will not take properly.
 
 **The download failed.**
 Run `launch.bat` again — it will pick up where it left off. If the engine or a model repeatedly fails, your internet may be blocking it; try again on a different connection. The launcher also prints manual download links if you'd rather grab the files yourself.
