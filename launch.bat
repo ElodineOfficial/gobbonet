@@ -416,214 +416,51 @@ echo  [ERROR] Invalid selection. Please restart and enter a number from the list
 goto :fatal
 
 :: ---------------------------------------------------------------
-:: IDENTIFY MODEL — detect family from filename to set metadata
+:: IDENTIFY MODEL -- read the chat template baked into the GGUF
 ::
-:: Format names mirror chat.html's THINKING_FORMAT registry:
+:: Detection is driven by the embedded tokenizer.chat_template (ground
+:: truth), NOT the filename. identify-model.ps1 is the single source of
+:: truth, shared with the models-list.json builder further down, so the
+:: initial launch and the hot-swap dropdown can never disagree.
+::
+:: Thinking-format names mirror chat.html's registry:
 ::   none      = no thinking (Llama, Mistral, Phi, Gemma 3 base)
 ::   deepseek  = <think>...</think>  (R1, Qwen3, QwQ, GLM thinking, etc.)
-::   harmony   = gpt-oss channels    (gpt-oss-20b, gpt-oss-120b)
-::   gemma     = Gemma <channel|>    (Gemma 4)
+::   harmony   = gpt-oss channels
+::   gemma     = Gemma channel thinking (Gemma 4)
 :: ---------------------------------------------------------------
 :identify_model
 for %%F in ("!GGUF_PATH!") do set "GGUF_BASENAME=%%~nxF"
 
-:: Detect model family from filename keywords
+:: Defaults, overwritten by the identifier (or kept if it is missing).
 set "MODEL_ID=custom"
 set "MODEL_DISPLAY=!GGUF_BASENAME!"
 set "MODEL_FAMILY=custom"
 set "MODEL_MAX_CTX=131072"
 set "MODEL_THINK_FMT=none"
+set "MODEL_USE_JINJA=1"
+set "MODEL_CHAT_TEMPLATE="
 
-:: gpt-oss — Harmony channels
-echo !GGUF_BASENAME! | findstr /i /c:"gpt-oss" /c:"gpt_oss" /c:"gptoss" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_ID=gpt-oss"
-    set "MODEL_DISPLAY=gpt-oss"
-    set "MODEL_FAMILY=gpt-oss"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=harmony"
-    goto :write_model_json
-)
-echo !GGUF_BASENAME! | findstr /i /c:"gemma-4" /c:"gemma4" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_ID=gemma4"
-    set "MODEL_DISPLAY=Gemma 4"
-    set "MODEL_FAMILY=gemma"
-    set "MODEL_MAX_CTX=262144"
-    set "MODEL_THINK_FMT=gemma"
-    goto :write_model_json
-)
-echo !GGUF_BASENAME! | findstr /i /c:"gemma-3" /c:"gemma3" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_ID=gemma3"
-    set "MODEL_DISPLAY=Gemma 3"
-    set "MODEL_FAMILY=gemma"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=none"
-    goto :write_model_json
-)
-:: DeepSeek-R1 + distills — check BEFORE qwen/llama because distill names
-:: contain those keywords (e.g. DeepSeek-R1-Distill-Qwen3-8B)
-echo !GGUF_BASENAME! | findstr /i /c:"deepseek-r1" /c:"deepseek_r1" /c:"r1-distill" /c:"r1_distill" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_ID=deepseek-r1"
-    set "MODEL_DISPLAY=DeepSeek-R1"
-    set "MODEL_FAMILY=deepseek"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=deepseek"
-    goto :write_model_json
-)
-echo !GGUF_BASENAME! | findstr /i "deepseek" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_ID=deepseek"
-    set "MODEL_DISPLAY=DeepSeek"
-    set "MODEL_FAMILY=deepseek"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=deepseek"
-    goto :write_model_json
-)
-echo !GGUF_BASENAME! | findstr /i "qwq" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_ID=qwq"
-    set "MODEL_DISPLAY=QwQ"
-    set "MODEL_FAMILY=qwen"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=deepseek"
-    goto :write_model_json
-)
-echo !GGUF_BASENAME! | findstr /i /c:"qwen3" /c:"qwen-3" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_ID=qwen3"
-    set "MODEL_DISPLAY=Qwen3"
-    set "MODEL_FAMILY=qwen"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=deepseek"
-    goto :write_model_json
-)
-echo !GGUF_BASENAME! | findstr /i "qwen" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_ID=qwen"
-    set "MODEL_DISPLAY=Qwen"
-    set "MODEL_FAMILY=qwen"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=deepseek"
-    goto :write_model_json
-)
-echo !GGUF_BASENAME! | findstr /i /c:"glm-4" /c:"glm4" /c:"chatglm" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_ID=glm"
-    set "MODEL_DISPLAY=GLM"
-    set "MODEL_FAMILY=glm"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=deepseek"
-    goto :write_model_json
-)
-echo !GGUF_BASENAME! | findstr /i "granite" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_ID=granite"
-    set "MODEL_DISPLAY=Granite"
-    set "MODEL_FAMILY=granite"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=none"
-    echo !GGUF_BASENAME! | findstr /i /c:"think" /c:"reason" >nul 2>&1
+:: identify-model.ps1 prints a block of `set` statements; we CALL them
+:: into the current environment so they feed the launch command below.
+set "ID_SCRIPT=%~dp0identify-model.ps1"
+set "ID_OUT=%TEMP%\gobbo_model_%RANDOM%.cmd"
+if exist "!ID_SCRIPT!" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "!ID_SCRIPT!" -GgufPath "!GGUF_PATH!" -Emit batch -OutFile "!ID_OUT!" 2>nul
+    if exist "!ID_OUT!" (
+        call "!ID_OUT!"
+        del "!ID_OUT!" >nul 2>&1
+    )
+    echo  [OK] Identified: !MODEL_DISPLAY!  ^(family=!MODEL_FAMILY!, jinja=!MODEL_USE_JINJA!^)
+    if not "!MODEL_CHAT_TEMPLATE!"=="" (
+        echo       Using llama-server built-in template: !MODEL_CHAT_TEMPLATE!  ^(--jinja disabled^)
+    )
+) else (
+    echo  [!!] identify-model.ps1 not found next to launch.bat.
+    echo       Falling back to generic settings ^(embedded template via --jinja^).
+    echo  !GGUF_BASENAME! | findstr /i /c:"think" /c:"reason" >nul 2>&1
     if not errorlevel 1 set "MODEL_THINK_FMT=deepseek"
-    goto :write_model_json
 )
-echo !GGUF_BASENAME! | findstr /i "hunyuan" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_ID=hunyuan"
-    set "MODEL_DISPLAY=Hunyuan"
-    set "MODEL_FAMILY=hunyuan"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=none"
-    echo !GGUF_BASENAME! | findstr /i /c:"think" /c:"reason" >nul 2>&1
-    if not errorlevel 1 set "MODEL_THINK_FMT=deepseek"
-    goto :write_model_json
-)
-:: Mistral Nemo (and its mergekit children) — check BEFORE 'llama' and
-:: 'mistral' because:
-::   - "MN-" is the mergekit convention for Mistral Nemo merges
-::     (MN-Violet-Lotus, MN-12B-Lyra, MN-Twilight-Maid, etc.)
-::   - Many Nemo finetunes/merges don't contain "mistral" in the filename
-::     at all (Rocinante, Magnum-v4-12B, UnslopNemo, Violet Twilight, ...)
-::   - When the filename DOES contain "llama" alongside "nemo" (rare
-::     cross-architecture merges), we still want Nemo treatment because
-::     that's the chat template the model actually expects.
-::
-:: We drop --jinja and force the built-in 'mistral-v3-tekken' template.
-:: The Mistral Nemo Tekken v3 chat_template embedded in most Nemo GGUFs has
-:: [AVAILABLE_TOOLS] / [TOOL_CALLS] / [ARGS] Jinja blocks that minja can't
-:: render cleanly. Mergekit merges make it worse: model_stock often strips
-:: or partially overwrites tokenizer.chat_template, leaving the GGUF with a
-:: template that loads but produces garbage under --jinja. The C++ built-in
-:: is a clean reference implementation of the same template and works
-:: regardless of what the GGUF has baked in.
-echo !GGUF_BASENAME! | findstr /i /c:"mistral-nemo" /c:"mistral_nemo" /c:"MN-" /c:"MN_" /c:"nemo" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_ID=mistral-nemo"
-    set "MODEL_DISPLAY=Mistral Nemo (12B)"
-    set "MODEL_FAMILY=mistral"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=none"
-    set "MODEL_USE_JINJA=0"
-    set "MODEL_CHAT_TEMPLATE=mistral-v3-tekken"
-    goto :write_model_json
-)
-
-:: Mistral Small 24B family (Cydonia v4+, Asmodeus, and the upstream
-:: Mistral-Small-24B base) — strict v7-tekken template embedded in the
-:: GGUF enforces user/assistant alternation. The chat.html normalizer
-:: now produces compliant arrays, so --jinja against the embedded
-:: template is fine. This block just gives the model proper labelling
-:: and family routing in the UI instead of "Custom GGUF".
-echo !GGUF_BASENAME! | findstr /i /c:"cydonia" /c:"asmodeus" /c:"mistral-small" /c:"mistral_small" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_ID=mistral-small"
-    set "MODEL_DISPLAY=Mistral Small (24B)"
-    set "MODEL_FAMILY=mistral"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=none"
-    goto :write_model_json
-)
-
-echo !GGUF_BASENAME! | findstr /i "llama" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_ID=llama"
-    set "MODEL_DISPLAY=Llama"
-    set "MODEL_FAMILY=llama"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=none"
-    goto :write_model_json
-)
-echo !GGUF_BASENAME! | findstr /i /c:"mistral" /c:"mixtral" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_ID=mistral"
-    set "MODEL_DISPLAY=Mistral"
-    set "MODEL_FAMILY=mistral"
-    set "MODEL_MAX_CTX=32768"
-    set "MODEL_THINK_FMT=none"
-    goto :write_model_json
-)
-echo !GGUF_BASENAME! | findstr /i "phi" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_ID=phi"
-    set "MODEL_DISPLAY=Phi"
-    set "MODEL_FAMILY=phi"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=none"
-    goto :write_model_json
-)
-
-:: Generic fallback — if filename mentions thinking/reasoning, assume <think>
-echo !GGUF_BASENAME! | findstr /i /c:"think" /c:"reason" >nul 2>&1
-if not errorlevel 1 (
-    set "MODEL_THINK_FMT=deepseek"
-)
-
-:: Unknown model — leave defaults (custom)
-echo  [..] Model family not recognised — using generic settings.
-echo       To add support, edit :identify_model in launch.bat
-echo       and MODEL_REGISTRY in chat.html.
 
 goto :write_model_json
 
@@ -1026,48 +863,19 @@ echo.
 :: Mistral Nemo's MODEL_USE_JINJA=0 + mistral-v3-tekken template)
 :: ride along correctly without launch.bat being in the loop.
 ::
-:: All the identification logic is duplicated here in PowerShell to
-:: avoid 300 lines of nested findstr inside a for loop. Keep the
-:: rules below in sync with :identify_model above; if you add a new
-:: family there, mirror it here.
+:: identify-model.ps1 (the SAME script :identify_model used above) reads
+:: every GGUF in models\ and writes one record per file. Detection lives
+:: in exactly one place now, so the dropdown, the hot-swap launcher and
+:: the initial launch can never disagree about a model template/jinja mode.
 :: ---------------------------------------------------------------
 echo  [..] Writing models-list.json...
 set "MODELS_LIST_JSON=%~dp0models-list.json"
 set "ACTIVE_GGUF_NAME=!GGUF_BASENAME!"
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ErrorActionPreference = 'Stop';" ^
-  "$dir    = $env:MODEL_DIR;" ^
-  "$out    = $env:MODELS_LIST_JSON;" ^
-  "$active = $env:ACTIVE_GGUF_NAME;" ^
-  "function Identify($f) {" ^
-  "  $n = $f.ToLower();" ^
-  "  $r = @{ file=$f; id='custom'; name=$f; family='custom'; thinkingFormat='none'; maxCtx=131072; useJinja=1; chatTemplate=''; active=$false };" ^
-  "  if ($n -match 'gpt[-_]?oss') { $r.id='gpt-oss'; $r.name='gpt-oss'; $r.family='gpt-oss'; $r.thinkingFormat='harmony'; return $r };" ^
-  "  if ($n -match 'gemma[-_]?4')  { $r.id='gemma4'; $r.name='Gemma 4'; $r.family='gemma'; $r.thinkingFormat='gemma'; $r.maxCtx=262144; return $r };" ^
-  "  if ($n -match 'gemma[-_]?3')  { $r.id='gemma3'; $r.name='Gemma 3'; $r.family='gemma'; return $r };" ^
-  "  if ($n -match 'deepseek[-_]?r1' -or $n -match 'r1[-_]distill') { $r.id='deepseek-r1'; $r.name='DeepSeek-R1'; $r.family='deepseek'; $r.thinkingFormat='deepseek'; return $r };" ^
-  "  if ($n -match 'deepseek') { $r.id='deepseek'; $r.name='DeepSeek'; $r.family='deepseek'; $r.thinkingFormat='deepseek'; return $r };" ^
-  "  if ($n -match 'qwq')      { $r.id='qwq';   $r.name='QwQ';   $r.family='qwen'; $r.thinkingFormat='deepseek'; return $r };" ^
-  "  if ($n -match 'qwen[-_]?3') { $r.id='qwen3'; $r.name='Qwen3'; $r.family='qwen'; $r.thinkingFormat='deepseek'; return $r };" ^
-  "  if ($n -match 'qwen')     { $r.id='qwen';  $r.name='Qwen';  $r.family='qwen'; $r.thinkingFormat='deepseek'; return $r };" ^
-  "  if ($n -match 'glm[-_]?4' -or $n -match 'chatglm') { $r.id='glm'; $r.name='GLM'; $r.family='glm'; $r.thinkingFormat='deepseek'; return $r };" ^
-  "  if ($n -match 'granite') { $r.id='granite'; $r.name='Granite'; $r.family='granite'; if ($n -match 'think|reason') { $r.thinkingFormat='deepseek' }; return $r };" ^
-  "  if ($n -match 'hunyuan') { $r.id='hunyuan'; $r.name='Hunyuan'; $r.family='hunyuan'; if ($n -match 'think|reason') { $r.thinkingFormat='deepseek' }; return $r };" ^
-  "  if ($n -match 'mistral[-_]?nemo' -or $n -match '\bmn[-_]' -or $n -match 'nemo') { $r.id='mistral-nemo'; $r.name='Mistral Nemo (12B)'; $r.family='mistral'; $r.useJinja=0; $r.chatTemplate='mistral-v3-tekken'; return $r };" ^
-  "  if ($n -match 'cydonia' -or $n -match 'asmodeus' -or $n -match 'mistral[-_]?small') { $r.id='mistral-small'; $r.name='Mistral Small (24B)'; $r.family='mistral'; return $r };" ^
-  "  if ($n -match 'llama')   { $r.id='llama';   $r.name='Llama';   $r.family='llama';   return $r };" ^
-  "  if ($n -match 'mistral' -or $n -match 'mixtral') { $r.id='mistral'; $r.name='Mistral'; $r.family='mistral'; $r.maxCtx=32768; return $r };" ^
-  "  if ($n -match 'phi')     { $r.id='phi';     $r.name='Phi';     $r.family='phi';     return $r };" ^
-  "  if ($n -match 'think|reason') { $r.thinkingFormat='deepseek' };" ^
-  "  return $r" ^
-  "};" ^
-  "$files = Get-ChildItem -Path $dir -Filter '*.gguf' -File -ErrorAction SilentlyContinue | Sort-Object Name;" ^
-  "$models = @();" ^
-  "foreach ($f in $files) { $rec = Identify $f.Name; $rec.active = ($f.Name -eq $active); $models += [PSCustomObject]$rec };" ^
-  "$payload = [PSCustomObject]@{ active = $active; models = $models };" ^
-  "$enc = New-Object System.Text.UTF8Encoding($false);" ^
-  "[System.IO.File]::WriteAllText($out, ($payload | ConvertTo-Json -Depth 6), $enc);" ^
-  "Write-Host ('  [OK] ' + $models.Count + ' model(s) listed')"
+if exist "%~dp0identify-model.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0identify-model.ps1" -ModelsDir "!MODEL_DIR!" -Active "!ACTIVE_GGUF_NAME!" -OutFile "!MODELS_LIST_JSON!"
+) else (
+    echo  [!!] identify-model.ps1 not found; cannot build models-list.json.
+)
 
 if errorlevel 1 (
     echo  [!!] models-list.json write failed; header dropdown will be empty.
