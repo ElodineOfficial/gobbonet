@@ -5,6 +5,14 @@ Gobbonet lets you run an AI chatbot **on your own computer**, with no accounts, 
 This guide assumes you've never set up anything like this before. Take it one step at a time and you'll be chatting in about 20–30 minutes (most of that is just waiting for files to download).
 
 ---
+## Working models
+
+- **Llama** — working
+- **Gemma** — working
+- **DeepSeek** — working
+- **Mistral** — working (except Tekken-based Asmodeus models — see Known bugs)
+- **Granite** — currently bugged, low priority fix due to corperate specialization
+---
 
 ## What you're actually setting up
 
