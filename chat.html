@@ -3708,12 +3708,13 @@ function normalizeMessagesForStrictTemplates(messages) {
   if (!messages || !messages.length) return messages || [];
 
   const VALID_ROLES = new Set(['system', 'user', 'assistant']);
+  
+  // Distilled reasoning models (DeepSeek, Qwen) frequently ignore the 'system' role.
+  // Granite's native formatting is fragile. Folding the system prompt directly 
+  // into the first user message guarantees they read it.
+  const fam = (activeModel && activeModel.family) ? String(activeModel.family).toLowerCase() : '';
+  const foldLeadingSystem = ['deepseek', 'qwen', 'granite'].includes(fam);
 
-  // Pass 1: canonicalize. Lowercase role, stringify content, drop anything
-  // with an unrecognised role. Catches imported data with 'Assistant',
-  // 'tool', 'function', etc. — which would otherwise sail past every
-  // role check below and land in the server's template as a non-user
-  // at index 0, blowing up the alternation rule.
   let working = [];
   for (const m of messages) {
     if (!m || typeof m !== 'object') continue;
@@ -3724,8 +3725,6 @@ function normalizeMessagesForStrictTemplates(messages) {
   }
   if (!working.length) return [];
 
-  // Pass 2: collect leading systems into one merged message, then drop
-  // any leading assistant messages so the first non-system is user.
   let i = 0;
   const leadingSystem = [];
   while (i < working.length && working[i].role === 'system') {
@@ -3737,14 +3736,17 @@ function normalizeMessagesForStrictTemplates(messages) {
   }
 
   const out = [];
+  let pendingSystem = '';
+
   if (leadingSystem.length) {
-    out.push({ role: 'system', content: leadingSystem.join('\n\n') });
+    if (foldLeadingSystem && working.find(m => m.role === 'user')) {
+      // Defer system prompt to prepend it to the first user message
+      pendingSystem = leadingSystem.join('\n\n');
+    } else {
+      out.push({ role: 'system', content: leadingSystem.join('\n\n') });
+    }
   }
 
-  // Pass 3: walk the rest. Mid-conversation system messages fold into
-  // the next user message as a [System: ...] prefix. If none follows,
-  // they get appended to the most recent user as a trailing note.
-  let pendingSystem = '';
   for (; i < working.length; i++) {
     const m = working[i];
     if (m.role === 'system') {
@@ -3754,7 +3756,13 @@ function normalizeMessagesForStrictTemplates(messages) {
       continue;
     }
     if (pendingSystem && m.role === 'user') {
-      out.push({ role: 'user', content: `[System: ${pendingSystem}]\n\n${m.content}` });
+      const isFirstUser = m === working.find(w => w.role === 'user');
+      // Only add the [System: ] label for mid-conversation injected prompts.
+      // For the main folded system block at the start, inject it seamlessly.
+      const prefix = (isFirstUser && foldLeadingSystem)
+        ? `${pendingSystem}\n\n`
+        : `[System: ${pendingSystem}]\n\n`;
+      out.push({ role: 'user', content: prefix + m.content });
       pendingSystem = '';
     } else {
       out.push({ role: m.role, content: m.content });
@@ -3769,22 +3777,12 @@ function normalizeMessagesForStrictTemplates(messages) {
     }
   }
 
-  // Pass 4: drop empty/whitespace-only assistant messages. Aborted
-  // generations and old parser splits can leave content === '' on an
-  // assistant. Strict templates either raise on empty content or render
-  // to whitespace that throws off the alternation count. Dropping these
-  // is safe because they carry no information. This is THE fix for the
-  // 502 on old threads and rerolls: an empty assistant sandwiched between
-  // two users used to slip through every earlier pass and trip the
-  // template's alternation check (it sees user/assistant where the empty
-  // asst rendered to nothing visible but still counted in the index).
+  // Drop empty/whitespace-only assistant messages.
   const nonEmpty = out.filter(m =>
     m.role !== 'assistant' || (m.content || '').trim().length > 0
   );
 
-  // Pass 5: merge consecutive same-role conversation messages. Pass 4
-  // can create user/user pairs by removing an empty assistant between
-  // two users — this pass collapses them.
+  // Merge consecutive same-role conversation messages.
   const merged = [];
   for (const m of nonEmpty) {
     const prev = merged[merged.length - 1];
@@ -3795,15 +3793,12 @@ function normalizeMessagesForStrictTemplates(messages) {
     }
   }
 
-  // Pass 6: drop trailing assistant messages. Strict templates need the
-  // final message to be the user turn the model is about to answer.
+  // Drop trailing assistant messages so the array terminates cleanly on 'user'.
   while (merged.length && merged[merged.length - 1].role === 'assistant') {
     merged.pop();
   }
 
-  // Pass 7: belt-and-suspenders re-merge after pass 6. Popping trailing
-  // assistants can in theory expose a new same-role neighbour. Cheap to
-  // re-run; guarantees the array we return is fully alternating.
+  // Re-merge after popping (guarantees strictly alternating array).
   const finalPass = [];
   for (const m of merged) {
     const prev = finalPass[finalPass.length - 1];
