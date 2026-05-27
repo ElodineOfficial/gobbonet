@@ -7,10 +7,10 @@ This guide assumes you've never set up anything like this before. Take it one st
 ---
 ## Working models
 
-- **Llama** — working
+- **Llama** — working [needs a cleanup]
 - **Gemma** — working
 - **DeepSeek** — working
-- **Mistral** — working (except Tekken-based Asmodeus models — see Known bugs)
+- **Mistral** — working [except Asmodeus and Nemo, these models are hit and miss, Cydonia and Violet work just fine]
 - **Granite** — currently bugged, low priority fix due to corperate specialization
 ---
 
