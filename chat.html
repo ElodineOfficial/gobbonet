@@ -2123,6 +2123,111 @@ function processGemmaStream(msg, state) {
   }
 }
 
+/* ================================================================
+   TOOL-CALL ENVELOPE UNWRAP
+
+   Some models — most notably Meta's Llama 3.x, whose embedded chat
+   template advertises tool/function calling — reply to ordinary chat
+   by wrapping the plain text in a JSON "function call" envelope
+   instead of just speaking. A bare "hello" comes back as:
+
+       {"name": "print", "parameters": {"s": "Hello, friend!"}}
+
+   We never send a `tools` array on our requests, so llama-server has
+   no tool schema to bind this to; it leaves the JSON verbatim in
+   `content`, and it renders in the chat box as raw JSON. This unwraps
+   that envelope back to the human-facing text ("Hello, friend!").
+
+   It is deliberately strict: it only fires when the ENTIRE message is
+   a single such envelope, so a normal reply that merely happens to
+   contain JSON is never altered. On any non-matching input it returns
+   the original text unchanged (a true no-op), which keeps every other
+   model's output untouched.
+================================================================ */
+
+// Argument keys that, when present, hold the text the model meant to "say".
+// Covers the common shapes across Llama/Mistral/generic tool templates.
+const TOOLCALL_TEXT_KEYS = [
+  's', 'text', 'content', 'message', 'response',
+  'output', 'answer', 'reply', 'value', 'say', 'msg'
+];
+
+/**
+ * If `raw` is exactly a single tool-call envelope wrapping plain text,
+ * return that inner text. Otherwise return null (caller leaves text as-is).
+ */
+function extractToolCallText(raw) {
+  if (!raw) return null;
+  const t = raw.trim();
+  // Must be a lone JSON object that constitutes the whole message.
+  if (t.charAt(0) !== '{' || t.charAt(t.length - 1) !== '}') return null;
+  // Cheap structural pre-check so we don't JSON.parse every message.
+  if (!/"name"\s*:/.test(t)) return null;
+  if (!/"(?:parameters|arguments)"\s*:/.test(t)) return null;
+
+  let obj;
+  try { obj = JSON.parse(t); } catch (e) { return null; }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+  if (typeof obj.name !== 'string') return null;
+
+  let args = (obj.parameters != null) ? obj.parameters : obj.arguments;
+  if (args == null) return null;
+  // Some servers double-encode the arguments as a JSON string.
+  if (typeof args === 'string') {
+    try { args = JSON.parse(args); } catch (e) { return args; } // plain string arg
+  }
+  if (typeof args === 'string') return args;
+  if (typeof args !== 'object' || Array.isArray(args)) return null;
+
+  // Prefer a recognized "say this" field.
+  for (const k of TOOLCALL_TEXT_KEYS) {
+    if (typeof args[k] === 'string') return args[k];
+  }
+  // Fallback: a single string-valued argument is almost certainly the text.
+  const strVals = Object.keys(args)
+    .map(k => args[k])
+    .filter(v => typeof v === 'string');
+  if (strVals.length === 1) return strVals[0];
+
+  return null;
+}
+
+/** No-op-safe wrapper: returns unwrapped text, or the original if not an envelope. */
+function unwrapToolCallText(raw) {
+  const inner = extractToolCallText(raw);
+  return (inner == null) ? raw : inner;
+}
+
+/**
+ * Best-effort unwrap for the LIVE streaming view, where `raw` may be a
+ * still-incomplete envelope (the closing braces haven't arrived yet).
+ * Only engages once the content clearly opens with a tool-call envelope,
+ * so normal replies stream exactly as before. While the inner string is
+ * mid-stream we surface what we have so the user sees clean text building
+ * up instead of raw JSON braces; finalizeStreamMessage() does the strict,
+ * authoritative unwrap when the stream ends.
+ */
+function unwrapToolCallTextLive(raw) {
+  if (!raw) return raw;
+  const t = raw.trim();
+  // Only intervene when this looks like a tool-call envelope from the start.
+  if (!/^\{\s*"name"\s*:/.test(t)) return raw;
+
+  // If it's already complete and parseable, use the strict result.
+  const strict = extractToolCallText(t);
+  if (strict != null) return strict;
+
+  // Partial: tolerantly pull the in-progress text value of the first
+  // recognized key. Handles escaped quotes inside the string.
+  const keyGroup = TOOLCALL_TEXT_KEYS.join('|');
+  const m = t.match(new RegExp('"(?:' + keyGroup + ')"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)'));
+  if (m) {
+    try { return JSON.parse('"' + m[1] + '"'); } catch (e) { return m[1]; }
+  }
+  // Envelope opened but no text field yet — show nothing rather than braces.
+  return '';
+}
+
 /**
  * Called once at end-of-stream to flush any held-back buffer and
  * scrub any stray markers that slipped through (e.g., truncated
@@ -2180,6 +2285,11 @@ function finalizeStreamMessage(msg) {
         .replace(/<\|(?:end|return|start|message|channel)\|>/g, '');
     }
     msg.content = msg.content.trim();
+
+    // Llama 3.x (and similar) sometimes wrap a plain reply in a JSON
+    // function-call envelope, e.g. {"name":"print","parameters":{"s":"Hi"}}.
+    // Unwrap it back to the human-facing text. No-op on normal replies.
+    msg.content = unwrapToolCallText(msg.content).trim();
   }
 
   delete msg._parseState;
@@ -5911,7 +6021,11 @@ function renderMessages() {
     const className = `message message-${m.role}${archivedClass}`;
     const textColor = isUser ? userTextColor : aiTextColor;
     const dialogColor = isUser ? userDialogColor : aiDialogColor;
-    const parsed = parseMarkdown(translateTemplates(m.content, cardName, userName, true), dialogColor);
+    // Display-time safety net: assistant messages saved before the unwrap fix
+    // (or produced by any path that bypasses finalize) may still hold a raw
+    // tool-call envelope. Unwrap for display only; stored content is untouched.
+    const displayContent = isUser ? m.content : unwrapToolCallText(m.content);
+    const parsed = parseMarkdown(translateTemplates(displayContent, cardName, userName, true), dialogColor);
     const textColorStyle = textColor ? ` style="color:${textColor};"` : '';
     const isLastAI = !isUser && i === thread.messages.length - 1;
     const isEditing = state.editingIndex === i;
@@ -6339,7 +6453,10 @@ function renderStreamingUpdate(assistantMsg) {
   if (hasContent) {
     const contentEl = lastMsg && lastMsg.querySelector('.message-content');
     if (contentEl) {
-      contentEl.innerHTML = parseMarkdown(assistantMsg.content, aiDialogColor);
+      // Surface clean text live if the model is wrapping its reply in a
+      // tool-call envelope (Llama 3.x); plain replies pass through untouched.
+      const liveText = unwrapToolCallTextLive(assistantMsg.content);
+      contentEl.innerHTML = parseMarkdown(liveText, aiDialogColor);
       if (aiTextColor) contentEl.style.color = aiTextColor;
     }
     // Scroll page while content is streaming
