@@ -3710,10 +3710,9 @@ function normalizeMessagesForStrictTemplates(messages) {
   const VALID_ROLES = new Set(['system', 'user', 'assistant']);
   
   // Distilled reasoning models (DeepSeek, Qwen) frequently ignore the 'system' role.
-  // Granite's native formatting is fragile. Folding the system prompt directly 
-  // into the first user message guarantees they read it.
+  // Folding the system prompt directly into the first user message guarantees they read it.
   const fam = (activeModel && activeModel.family) ? String(activeModel.family).toLowerCase() : '';
-  const foldLeadingSystem = ['deepseek', 'qwen', 'granite'].includes(fam);
+  const foldLeadingSystem = ['deepseek', 'qwen'].includes(fam);
 
   let working = [];
   for (const m of messages) {

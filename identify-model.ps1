@@ -84,11 +84,14 @@ $HashDerivations = @{
     'e10ca381b1ccc5cf9db52e371f3b6651576caee0a630b452e2816b2d404d4b65' = @{ family='llama'; id='llama'; jinja=1; builtin=''; think='none' }
     '5816fce10444e03c2e9ee1ef8a4a1ea61ae7e69e438613f3b17b69d0426223a4' = @{ family='llama'; id='llama'; jinja=1; builtin=''; think='none' }
     '73e87b1667d87ab7d7b579107f01151b29ce7f3ccdd1018fdc397e78be76219d' = @{ family='llama'; id='llama'; jinja=1; builtin=''; think='none' }
-    'e16746b40344d6c5b5265988e0328a0bf7277be86f1c335156eae07e29c82826' = @{ family='mistral'; id='mistral'; jinja=0; builtin='mistral-v3'; think='none' }
-    '26a59556925c987317ce5291811ba3b7f32ec4c647c400c6cc7e3a9993007ba7' = @{ family='mistral'; id='mistral'; jinja=0; builtin='mistral-v3'; think='none' }
-    'e4676cb56dffea7782fd3e2b577cfaf1e123537e6ef49b3ec7caa6c095c62272' = @{ family='mistral'; id='mistral'; jinja=0; builtin='mistral-v3-tekken'; think='none' }
-    '3c4ad5fa60dd8c7ccdf82fa4225864c903e107728fcaf859fa6052cb80c92ee9' = @{ family='mistral'; id='mistral'; jinja=0; builtin='mistral-v7'; think='none' }
-    '3934d199bfe5b6fab5cba1b5f8ee475e8d5738ac315f21cb09545b4e665cc005' = @{ family='mistral'; id='mistral'; jinja=0; builtin='mistral-v7-tekken'; think='none' }
+    
+    # ALL Mistral Hashes updated to use embedded Jinja (jinja=1) to prevent system prompt loss
+    'e16746b40344d6c5b5265988e0328a0bf7277be86f1c335156eae07e29c82826' = @{ family='mistral'; id='mistral'; jinja=1; builtin=''; think='none' }
+    '26a59556925c987317ce5291811ba3b7f32ec4c647c400c6cc7e3a9993007ba7' = @{ family='mistral'; id='mistral'; jinja=1; builtin=''; think='none' }
+    'e4676cb56dffea7782fd3e2b577cfaf1e123537e6ef49b3ec7caa6c095c62272' = @{ family='mistral'; id='mistral-nemo'; jinja=1; builtin=''; think='none' }
+    '3c4ad5fa60dd8c7ccdf82fa4225864c903e107728fcaf859fa6052cb80c92ee9' = @{ family='mistral'; id='mistral'; jinja=1; builtin=''; think='none' }
+    '3934d199bfe5b6fab5cba1b5f8ee475e8d5738ac315f21cb09545b4e665cc005' = @{ family='mistral'; id='mistral-small'; jinja=1; builtin=''; think='none' }
+    
     'ecd6ae513fe103f0eb62e8ab5bfa8d0fe45c1074fa398b089c93a7e70c15cfd6' = @{ family='gemma'; id='gemma3'; jinja=1; builtin=''; think='none' }
     '87fa45af6cdc3d6a9e4dd34a0a6848eceaa73a35dcfe976bd2946a5822a38bf3' = @{ family='gemma'; id='gemma3'; jinja=1; builtin=''; think='none' }
     '7de1c58e208eda46e9c7f86397df37ec49883aeece39fb961e0a6b24088dd3c4' = @{ family='gemma'; id='gemma3'; jinja=1; builtin=''; think='none' }
@@ -144,17 +147,28 @@ function Get-ModelInfo {
 
     $meta = Read-GgufMeta -Path $Path
 
-    # --- HARD OVERRIDES (Fix for Asmodeus & Granite Crashes) ---
-    if ($name -match 'asmodeus|cydonia|mistral[-_.]?small') {
-        $rec.family = 'mistral'; $rec.id = 'mistral-small'; $rec.useJinja = 0; $rec.chatTemplate = 'mistral-v7-tekken'
+# --- HARD OVERRIDES ---
+    # 1. Mistral variants (Cydonia, Nemo, Lotus)
+    if ($name -match 'cydonia|asmodeus|mistral[-_.]?small') {
+        $rec.family = 'mistral'; $rec.id = 'mistral-small'; $rec.useJinja = 1; $rec.chatTemplate = ''
         return $rec
     }
+    if ($name -match 'nemo|violet[-_]?lotus|rocinante|magnum') {
+        $rec.family = 'mistral'; $rec.id = 'mistral-nemo'; $rec.useJinja = 1; $rec.chatTemplate = ''
+        return $rec
+    }
+    # 2. Granite
     if ($name -match 'granite') {
-        $rec.family = 'granite'; $rec.id = 'granite'; $rec.useJinja = 0; $rec.chatTemplate = 'granite'
+        $rec.family = 'granite'; $rec.id = 'granite'; $rec.useJinja = 1; $rec.chatTemplate = ''
         if ($name -match 'think') { $rec.thinkingFormat = 'deepseek' }
         return $rec
     }
-    # -----------------------------------------------------------
+    # 3. Llama 3 / 3.1 / 3.2 (The fix for the "junk" output)
+    if ($name -match 'llama[-_]?[3]') {
+        $rec.family = 'llama'; $rec.id = 'llama'; $rec.useJinja = 1; $rec.chatTemplate = ''
+        return $rec
+    }
+    # ----------------------
 
     if ($null -eq $meta) {
         $side = Find-SidecarTemplate -GgufPath $Path
