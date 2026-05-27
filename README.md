@@ -10,8 +10,8 @@ This guide assumes you've never set up anything like this before. Take it one st
 - **Llama** — working
 - **Gemma** — working
 - **DeepSeek** — working
-- **Mistral** — working [except Asmodeus and Nemo, these models are hit and miss, Cydonia and Violet work just fine]
-- **Granite** — currently bugged, low priority fix due to corperate specialization
+- **Mistral** — hit and miss [cydonia works]
+- **Granite** — working
 ---
 
 ## What you're actually setting up
