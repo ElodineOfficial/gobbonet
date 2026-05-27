@@ -158,8 +158,19 @@ function Get-ModelInfo {
         return $rec
     }
     # 2. Granite
+    #
+    # Granite GGUFs ship a tool-calling Jinja chat template (available_tools /
+    # assistant_tool_call / tool_response roles, `tool | tojson`). On recent
+    # llama.cpp builds the startup autoparser tries to synthesize a tool-call
+    # example from that template and aborts ("Failed to generate tool call
+    # example" / "Unable to generate parser for this template"), so the server
+    # never comes up under --jinja and a hot-swap dies on launch. Route around
+    # it with llama.cpp's built-in C++ Granite template -- the same trick used
+    # for Mistral Nemo above. (Built-in template is chat-only; tool calling is
+    # not wired up, which is fine for a chat UI.)
     if ($name -match 'granite') {
-        $rec.family = 'granite'; $rec.id = 'granite'; $rec.useJinja = 1; $rec.chatTemplate = ''
+        $rec.family = 'granite'; $rec.id = 'granite'; $rec.useJinja = 0
+        if ($name -match 'granite[-_.]?4') { $rec.chatTemplate = 'granite-4.0' } else { $rec.chatTemplate = 'granite' }
         if ($name -match 'think') { $rec.thinkingFormat = 'deepseek' }
         return $rec
     }

@@ -527,6 +527,45 @@ function Build-LaunchScript {
         $chatTemplate = [string]$Model.chatTemplate
     }
 
+    # Safety net for stale records. identify-model.ps1 now tags Mistral Nemo
+    # with useJinja=0 + mistral-v3-tekken, but a models-list.json generated
+    # before that fix may still carry a mis-identified Nemo as 'custom' with
+    # useJinja=1. Launching such a record with --jinja makes llama-server abort
+    # on the startup tool-call-example check ("did not stay running"). Detect
+    # Nemo by name here and force the built-in template so the swap works even
+    # without regenerating models-list.json. Honors an explicit non-empty
+    # chatTemplate if one is already set; only overrides the broken --jinja path.
+    $nameForMatch = ''
+    if ($Model.PSObject.Properties.Match('name').Count -gt 0 -and $Model.name) { $nameForMatch = [string]$Model.name }
+    $fileForMatch = ''
+    if ($Model.PSObject.Properties.Match('file').Count -gt 0 -and $Model.file) { $fileForMatch = [string]$Model.file }
+    if (($nameForMatch -match 'nemo|(^|[-_])mn-') -or ($fileForMatch -match 'nemo|(^|[-_])mn-')) {
+        if ($useJinja -or -not $chatTemplate) {
+            $useJinja = $false
+            if (-not $chatTemplate) { $chatTemplate = 'mistral-v3-tekken' }
+            Write-Host "[swap] Nemo safety net: forcing built-in template '$chatTemplate' (--jinja disabled)"
+        }
+    }
+
+    # Same class of failure for Granite: its embedded tool-calling Jinja
+    # template makes the new-engine startup autoparser abort ("failed to
+    # generate tool call example"), so a record that still carries useJinja=1
+    # (e.g. a models-list.json written before the identify-model.ps1 fix) would
+    # die on launch. Force llama.cpp's built-in C++ Granite template instead.
+    if (($nameForMatch -match 'granite') -or ($fileForMatch -match 'granite')) {
+        if ($useJinja -or -not $chatTemplate) {
+            $useJinja = $false
+            if (-not $chatTemplate) {
+                if (($nameForMatch -match 'granite[-_.]?4') -or ($fileForMatch -match 'granite[-_.]?4')) {
+                    $chatTemplate = 'granite-4.0'
+                } else {
+                    $chatTemplate = 'granite'
+                }
+            }
+            Write-Host "[swap] Granite safety net: forcing built-in template '$chatTemplate' (--jinja disabled)"
+        }
+    }
+
     $argList = @(
         ('"{0}"' -f $ServerExe),
         '--model',     ('"{0}"' -f $ModelPath),
@@ -621,6 +660,59 @@ function Read-SwapStatus {
     try {
         return Get-Content $SwapStatus -Raw -Encoding UTF8 | ConvertFrom-Json
     } catch { return $null }
+}
+
+# Best-effort extraction of a human-meaningful reason from the tail of
+# llama-server.log after the process died on startup. Returns $null if the
+# log can't be read or nothing useful is found, in which case the caller
+# falls back to the generic "did not stay running" message.
+#
+# The signature table maps known fatal log strings to a plain-English cause +
+# next step. The patterns are matched case-insensitively against the tail,
+# scanning bottom-up so the most recent fatal line wins. If no signature
+# matches we surface the last non-empty log line verbatim -- still far more
+# actionable than "check the log".
+function Get-LlamaStartupError {
+    param([int]$TailLines = 40)
+
+    if (-not (Test-Path $LogFile)) { return $null }
+    try {
+        $lines = @(Get-Content -LiteralPath $LogFile -Tail $TailLines -ErrorAction Stop)
+    } catch {
+        return $null
+    }
+    if ($lines.Count -eq 0) { return $null }
+
+    $signatures = @(
+        @{ pat = 'failed to generate tool call example';       msg = "The model's chat template failed llama-server's startup validation (tool-call example) -- the classic Mistral Nemo / tool-template case. Launch it with a built-in template (mistral-v3-tekken) instead of --jinja." },
+        @{ pat = 'unable to generate parser for this template'; msg = "llama-server couldn't parse the model's Jinja chat template. Use a built-in --chat-template (mistral-v3-tekken for Nemo) instead of --jinja." },
+        @{ pat = 'error parsing grammar';                       msg = "llama-server rejected the chat-template grammar. Use a built-in --chat-template instead of --jinja." },
+        @{ pat = 'raise_exception';                             msg = "The chat template raised an exception during startup validation. Use a built-in --chat-template instead of --jinja." },
+        @{ pat = 'out of memory';                               msg = "llama-server ran out of VRAM loading this model. Lower GEMMA_GPU_LAYERS or GEMMA_CTX_SIZE." },
+        @{ pat = 'cudamalloc';                                  msg = "CUDA allocation failed (out of VRAM). Lower GEMMA_GPU_LAYERS or GEMMA_CTX_SIZE." },
+        @{ pat = 'failed to allocate';                          msg = "A memory buffer allocation failed loading the model. Lower GEMMA_GPU_LAYERS or GEMMA_CTX_SIZE." },
+        @{ pat = 'unknown model architecture';                  msg = "This GGUF's architecture isn't supported by your llama.cpp build. Update llama.cpp." },
+        @{ pat = 'failed to load model';                        msg = "llama-server couldn't load the GGUF (corrupt, truncated, or unsupported file)." },
+        @{ pat = 'error loading model';                         msg = "llama-server couldn't load the GGUF (corrupt, truncated, or unsupported file)." },
+        @{ pat = 'unknown argument';                            msg = "llama-server rejected a command-line flag -- your llama.cpp build may be older than the launch arguments expect." },
+        @{ pat = 'invalid argument';                            msg = "llama-server rejected a command-line flag. Check GEMMA_KV_CACHE_TYPE and the launch flags against your llama.cpp build." }
+    )
+
+    for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+        $low = $lines[$i].ToLower()
+        foreach ($s in $signatures) {
+            if ($low.Contains($s.pat)) { return $s.msg }
+        }
+    }
+
+    for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+        $t = $lines[$i].Trim()
+        if ($t -ne '') {
+            if ($t.Length -gt 240) { $t = $t.Substring(0, 240) + '...' }
+            return ('llama-server log: ' + $t)
+        }
+    }
+    return $null
 }
 
 # Update active-model.json so chat.html's loadActiveModel() picks up the
@@ -815,7 +907,12 @@ function Handle-SwapStatus {
             # legitimately have a brief window where no process exists.
             $procs = @(Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue)
             if ($procs.Count -eq 0 -and $elapsed -gt 5) {
-                $msg = 'llama-server did not stay running. Check llama-server.log for startup errors.'
+                $hint = Get-LlamaStartupError
+                if ($hint) {
+                    $msg = 'llama-server exited during startup. ' + $hint
+                } else {
+                    $msg = 'llama-server did not stay running. Check llama-server.log for startup errors.'
+                }
                 Write-SwapStatus -Phase 'error' -File $st.file -Name $st.name -Message $msg -StartedAt $st.started_at
                 if (Test-Path $SwapLock) { Remove-Item $SwapLock -Force -ErrorAction SilentlyContinue }
                 $st = Read-SwapStatus
