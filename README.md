@@ -7,7 +7,7 @@ This guide assumes you've never set up anything like this before. Take it one st
 ---
 ## Working models
 
-- **Llama** — working [needs a cleanup]
+- **Llama** — working
 - **Gemma** — working
 - **DeepSeek** — working
 - **Mistral** — working [except Asmodeus and Nemo, these models are hit and miss, Cydonia and Violet work just fine]
