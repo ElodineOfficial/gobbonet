@@ -142,7 +142,7 @@ function Get-ModelInfo {
     $name = $file -replace '(?i)\.gguf$', ''
     $rec = [ordered]@{
         file = $file; id = 'custom'; name = $name; family = 'custom'; thinkingFormat = 'none'
-        maxCtx = 131072; useJinja = 1; chatTemplate = ''; templateHash = ''
+        maxCtx = 131072; useJinja = 1; chatTemplate = ''; chatTemplateFile = ''; templateHash = ''
     }
 
     $meta = Read-GgufMeta -Path $Path
@@ -164,13 +164,19 @@ function Get-ModelInfo {
     # llama.cpp builds the startup autoparser tries to synthesize a tool-call
     # example from that template and aborts ("Failed to generate tool call
     # example" / "Unable to generate parser for this template"), so the server
-    # never comes up under --jinja and a hot-swap dies on launch. Route around
-    # it with llama.cpp's built-in C++ Granite template -- the same trick used
-    # for Mistral Nemo above. (Built-in template is chat-only; tool calling is
-    # not wired up, which is fine for a chat UI.)
+    # never comes up under --jinja.
+    #
+    # The bare built-in name (--chat-template granite) does NOT work on these
+    # builds either: llama-server treats "granite" as a *literal* template, so
+    # /apply-template emits just the word "granite" and the model is fed no
+    # conversation at all (proven via gobboDiag). The robust fix is a cleaned,
+    # no-tools template FILE passed with --chat-template-file: it loads (no
+    # tools => no autoparser crash) and formats correctly. We store just the
+    # filename; the launch paths resolve it against the project root, same as
+    # they do for the server exe and launch script. (Chat-only; no tools.)
     if ($name -match 'granite') {
-        $rec.family = 'granite'; $rec.id = 'granite'; $rec.useJinja = 0
-        if ($name -match 'granite[-_.]?4') { $rec.chatTemplate = 'granite-4.0' } else { $rec.chatTemplate = 'granite' }
+        $rec.family = 'granite'; $rec.id = 'granite'
+        $rec.useJinja = 1; $rec.chatTemplate = ''; $rec.chatTemplateFile = 'granite.jinja'
         if ($name -match 'think') { $rec.thinkingFormat = 'deepseek' }
         return $rec
     }
@@ -278,6 +284,7 @@ if ($Emit -eq 'batch') {
         ('set "MODEL_THINK_FMT=' + $info.thinkingFormat + '"'),
         ('set "MODEL_USE_JINJA=' + ([int]$info.useJinja) + '"'),
         ('set "MODEL_CHAT_TEMPLATE=' + $info.chatTemplate + '"'),
+        ('set "MODEL_CHAT_TEMPLATE_FILE=' + $info.chatTemplateFile + '"'),
         ('set "MODEL_TEMPLATE_HASH=' + $info.templateHash + '"')
     )
     if ($OutFile) {

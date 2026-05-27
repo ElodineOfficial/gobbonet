@@ -1,0 +1,64 @@
+{#-
+    Granite 3.x chat template -- cleaned, no-tools variant for llama.cpp.
+
+    WHY THIS FILE EXISTS
+    --------------------
+    The chat_template embedded in the Granite GGUFs is a tool-calling template.
+    On recent llama.cpp builds (post the Jinja-engine + autoparser rewrite) the
+    server's startup verification tries to synthesize a tool-call example from
+    that template and aborts -- so the model never loads under --jinja.
+
+    The obvious workaround, `--chat-template granite` (the built-in C++ name),
+    does NOT resolve to the built-in on these builds: llama-server treats the
+    bare word "granite" as a *literal* Jinja template, so /apply-template emits
+    the single string "granite" and the model is fed no conversation at all
+    (it then free-associates about the mineral).
+
+    This file is the robust fix: a real template, passed via
+    --chat-template-file, with the tool-calling section removed. It loads
+    cleanly (no tools => no autoparser crash) and formats correctly. It mirrors
+    the official Granite role framing:
+
+        <|start_of_role|>ROLE<|end_of_role|>CONTENT<|end_of_text|>
+
+    Tool/function calling is intentionally not wired up -- this is a chat UI.
+
+    Reasoning: if a system turn opts in (or the caller sets thinking), Granite's
+    documented behaviour is to emit <think>...</think><response>...</response>.
+    We expose that via the standard `enable_thinking` kwarg, defaulting off so
+    plain Granite-Instruct stays non-reasoning (matches identify-model.ps1,
+    which only sets thinkingFormat=deepseek when the filename says "think").
+-#}
+{%- if messages and messages[0]['role'] == 'system' -%}
+    {%- set system_message = messages[0]['content'] -%}
+    {%- set loop_messages = messages[1:] -%}
+{%- else -%}
+    {%- set system_message = '' -%}
+    {%- set loop_messages = messages -%}
+{%- endif -%}
+
+{%- if system_message -%}
+    {{- '<|start_of_role|>system<|end_of_role|>' + system_message | trim + '<|end_of_text|>\n' -}}
+{%- endif -%}
+
+{%- for message in loop_messages -%}
+    {%- set role = message['role'] -%}
+    {%- if role == 'assistant_tool_call' or role == 'tool_call' -%}
+        {#- Defensive: tool roles are not supported here. Fold any stray
+            tool-call turn into a plain assistant turn so the template never
+            errors on unexpected history rather than raising. -#}
+        {{- '<|start_of_role|>assistant<|end_of_role|>' + message['content'] | trim + '<|end_of_text|>\n' -}}
+    {%- elif role == 'tool' or role == 'tool_response' -%}
+        {{- '<|start_of_role|>user<|end_of_role|>' + message['content'] | trim + '<|end_of_text|>\n' -}}
+    {%- else -%}
+        {{- '<|start_of_role|>' + role + '<|end_of_role|>' + message['content'] | trim + '<|end_of_text|>\n' -}}
+    {%- endif -%}
+{%- endfor -%}
+
+{%- if add_generation_prompt -%}
+    {%- if enable_thinking is defined and enable_thinking -%}
+        {{- '<|start_of_role|>assistant<|end_of_role|><think>' -}}
+    {%- else -%}
+        {{- '<|start_of_role|>assistant<|end_of_role|>' -}}
+    {%- endif -%}
+{%- endif -%}

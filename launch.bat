@@ -107,6 +107,7 @@ set "MODEL_THINK_FMT=none"
 ::   The :identify_model block below sets these per family.
 set "MODEL_USE_JINJA=1"
 set "MODEL_CHAT_TEMPLATE="
+set "MODEL_CHAT_TEMPLATE_FILE="
 
 :: Install folder (relative to this script)
 set "LLAMA_DIR=%~dp0llama-cpp"
@@ -440,6 +441,7 @@ set "MODEL_MAX_CTX=131072"
 set "MODEL_THINK_FMT=none"
 set "MODEL_USE_JINJA=1"
 set "MODEL_CHAT_TEMPLATE="
+set "MODEL_CHAT_TEMPLATE_FILE="
 
 :: identify-model.ps1 prints a block of `set` statements; we CALL them
 :: into the current environment so they feed the launch command below.
@@ -905,18 +907,23 @@ echo       GPU layers: !GPU_LAYERS!
 echo       Log file:   !LOG_FILE!
 echo.
 echo       NOTE: The GGUF file usually contains its own chat template.
-if "!MODEL_USE_JINJA!"=="1" (
-    if not "!MODEL_CHAT_TEMPLATE!"=="" (
-        echo             Using --jinja with override: !MODEL_CHAT_TEMPLATE!
-    ) else (
-        echo             Using --jinja to honor the embedded Jinja template.
-    )
+if not "!MODEL_CHAT_TEMPLATE_FILE!"=="" (
+    echo             Using project template file: !MODEL_CHAT_TEMPLATE_FILE!
+    echo             ^(--jinja on, embedded template overridden^)
 ) else (
-    if not "!MODEL_CHAT_TEMPLATE!"=="" (
-        echo             Using llama-server built-in: !MODEL_CHAT_TEMPLATE!
-        echo             ^(--jinja disabled for this model family^)
+    if "!MODEL_USE_JINJA!"=="1" (
+        if not "!MODEL_CHAT_TEMPLATE!"=="" (
+            echo             Using --jinja with override: !MODEL_CHAT_TEMPLATE!
+        ) else (
+            echo             Using --jinja to honor the embedded Jinja template.
+        )
     ) else (
-        echo             --jinja disabled; falling back to fingerprint match.
+        if not "!MODEL_CHAT_TEMPLATE!"=="" (
+            echo             Using llama-server built-in: !MODEL_CHAT_TEMPLATE!
+            echo             ^(--jinja disabled for this model family^)
+        ) else (
+            echo             --jinja disabled; falling back to fingerprint match.
+        )
     )
 )
 echo.
@@ -960,12 +967,44 @@ echo.
 :: Build optional flags conditionally so we don't accidentally emit
 :: '--jinja' and '--chat-template <name>' together (mixing the two is
 :: legal but defeats the point of routing around a broken Jinja template).
+::
+:: Precedence for the template source:
+::   1. MODEL_CHAT_TEMPLATE_FILE -- a real .jinja file shipped with the
+::      project (e.g. granite.jinja). REQUIRES --jinja to be honored as a
+::      template (without --jinja, --chat-template-file is ignored). This
+::      feeds our file INSTEAD of the GGUF's embedded template, so it both
+::      sidesteps a broken embedded template and formats correctly. Used
+::      for Granite, whose embedded template crashes the loader AND whose
+::      built-in NAME doesn't resolve on current builds (it gets treated as
+::      a literal template -- the model ends up fed just the word "granite").
+::   2. MODEL_CHAT_TEMPLATE -- a built-in template NAME (e.g.
+::      mistral-v3-tekken). Used with --jinja DISABLED; llama-server's C++
+::      reference implementation renders it.
+::   3. Neither -- plain --jinja, honoring the GGUF's embedded template.
 set "JINJA_FLAG="
-if "!MODEL_USE_JINJA!"=="1" set "JINJA_FLAG=--jinja"
-
 set "CHAT_TEMPLATE_FLAG="
-if not "!MODEL_CHAT_TEMPLATE!"=="" (
-    set "CHAT_TEMPLATE_FLAG=--chat-template !MODEL_CHAT_TEMPLATE!"
+
+if not "!MODEL_CHAT_TEMPLATE_FILE!"=="" (
+    rem Resolve the filename against the project root (same dir as this
+    rem script / the server exe). A bare filename keeps models-list.json
+    rem portable; we expand to a full path only at launch time.
+    set "TEMPLATE_FILE_PATH=%~dp0!MODEL_CHAT_TEMPLATE_FILE!"
+    if exist "!TEMPLATE_FILE_PATH!" (
+        set "JINJA_FLAG=--jinja"
+        rem Note: value intentionally contains embedded quotes around the
+        rem path (it may contain spaces). Using the set VAR=value form
+        rem (no outer quotes) so the quotes belong to the value itself.
+        set CHAT_TEMPLATE_FLAG=--chat-template-file "!TEMPLATE_FILE_PATH!"
+    ) else (
+        echo  [!!] Chat-template file not found: !TEMPLATE_FILE_PATH!
+        echo       Falling back to embedded template via --jinja.
+        set "JINJA_FLAG=--jinja"
+    )
+) else (
+    if "!MODEL_USE_JINJA!"=="1" set "JINJA_FLAG=--jinja"
+    if not "!MODEL_CHAT_TEMPLATE!"=="" (
+        set "CHAT_TEMPLATE_FLAG=--chat-template !MODEL_CHAT_TEMPLATE!"
+    )
 )
 
 :: Write a small launcher script so we can reliably redirect output

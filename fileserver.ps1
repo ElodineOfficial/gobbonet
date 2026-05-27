@@ -519,12 +519,16 @@ function Build-LaunchScript {
 
     $useJinja      = $true
     $chatTemplate  = ''
+    $chatTemplateFile = ''
     if ($Model.PSObject.Properties.Match('useJinja').Count -gt 0) {
         # JSON ints come through as Int64 -- coerce defensively.
         $useJinja = [bool]([int]$Model.useJinja)
     }
     if ($Model.PSObject.Properties.Match('chatTemplate').Count -gt 0 -and $Model.chatTemplate) {
         $chatTemplate = [string]$Model.chatTemplate
+    }
+    if ($Model.PSObject.Properties.Match('chatTemplateFile').Count -gt 0 -and $Model.chatTemplateFile) {
+        $chatTemplateFile = [string]$Model.chatTemplateFile
     }
 
     # Safety net for stale records. identify-model.ps1 now tags Mistral Nemo
@@ -547,22 +551,25 @@ function Build-LaunchScript {
         }
     }
 
-    # Same class of failure for Granite: its embedded tool-calling Jinja
-    # template makes the new-engine startup autoparser abort ("failed to
-    # generate tool call example"), so a record that still carries useJinja=1
-    # (e.g. a models-list.json written before the identify-model.ps1 fix) would
-    # die on launch. Force llama.cpp's built-in C++ Granite template instead.
+    # Same class of failure for Granite, but with an extra twist. Its embedded
+    # tool-calling Jinja template makes the new-engine startup autoparser abort
+    # ("failed to generate tool call example"), AND the bare built-in name
+    # (--chat-template granite) does NOT resolve on current llama.cpp builds --
+    # it gets treated as a literal template, so the model is fed just the word
+    # "granite" and talks about the rock. The fix is a cleaned no-tools template
+    # FILE (granite.jinja, shipped in $Root) passed via --chat-template-file with
+    # --jinja on. This safety net catches stale models-list.json records (written
+    # before the identify-model.ps1 fix, carrying useJinja=1 / no file / or the
+    # old bare 'granite' name) and forces the file path so the swap works without
+    # regenerating the list.
     if (($nameForMatch -match 'granite') -or ($fileForMatch -match 'granite')) {
-        if ($useJinja -or -not $chatTemplate) {
-            $useJinja = $false
-            if (-not $chatTemplate) {
-                if (($nameForMatch -match 'granite[-_.]?4') -or ($fileForMatch -match 'granite[-_.]?4')) {
-                    $chatTemplate = 'granite-4.0'
-                } else {
-                    $chatTemplate = 'granite'
-                }
-            }
-            Write-Host "[swap] Granite safety net: forcing built-in template '$chatTemplate' (--jinja disabled)"
+        if (-not $chatTemplateFile) {
+            $chatTemplateFile = 'granite.jinja'
+            # Drop a stale bare-name template ('granite' / 'granite-4.0') so the
+            # file path below takes precedence cleanly.
+            if ($chatTemplate -match '^granite') { $chatTemplate = '' }
+            $useJinja = $true
+            Write-Host "[swap] Granite safety net: forcing template file 'granite.jinja' (--jinja on, embedded template overridden)"
         }
     }
 
@@ -577,8 +584,25 @@ function Build-LaunchScript {
         '--cache-type-v', $KvCacheType,
         '--parallel',  '1'
     )
-    if ($useJinja)     { $argList += '--jinja' }
-    if ($chatTemplate) { $argList += @('--chat-template', $chatTemplate) }
+    # Template source precedence (mirrors launch.bat):
+    #   1. chatTemplateFile -> --jinja --chat-template-file "<$Root\file>"
+    #      (a real .jinja shipped with the project; --jinja is REQUIRED for
+    #       --chat-template-file to be honored). Overrides the embedded template.
+    #   2. chatTemplate (built-in NAME) -> --chat-template <name>, --jinja off.
+    #   3. neither -> plain --jinja (embedded template) if useJinja.
+    if ($chatTemplateFile) {
+        $resolvedTemplatePath = Join-Path $Root $chatTemplateFile
+        if (Test-Path $resolvedTemplatePath) {
+            $argList += '--jinja'
+            $argList += @('--chat-template-file', ('"{0}"' -f $resolvedTemplatePath))
+        } else {
+            Write-Host "[swap] WARNING: chat-template file not found: $resolvedTemplatePath -- falling back to --jinja (embedded template)"
+            $argList += '--jinja'
+        }
+    } else {
+        if ($useJinja)     { $argList += '--jinja' }
+        if ($chatTemplate) { $argList += @('--chat-template', $chatTemplate) }
+    }
     $argList += @('--reasoning-format', 'auto')
     # Require the API key so only this proxy (which injects it) can talk to the
     # model. Bound to 127.0.0.1 above, so it's off the LAN regardless.
