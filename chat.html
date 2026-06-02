@@ -3139,8 +3139,12 @@ const STOP_STRINGS_BY_FAMILY = {
   // Gemma turn markers (thinking is channel-based *within* the turn, so these
   // boundary markers don't clip reasoning).
   gemma:      ['<end_of_turn>', '<start_of_turn>'],
-  // Cohere Command-R.
-  'command-r':['<|END_OF_TURN_TOKEN|>', '<|START_OF_TURN_TOKEN|>'],
+  // Cohere Command R / R+ / R7B. Keyed by 'cohere' to match the family
+  // identifier used in MODEL_REGISTRY / identify-model.ps1 / launch.bat —
+  // the lookup is by activeModel.family.toLowerCase(), so the key has to
+  // match exactly or getStopStrings() returns {} and the END_OF_TURN_TOKEN
+  // marker leaks into the rendered output.
+  cohere:     ['<|END_OF_TURN_TOKEN|>', '<|START_OF_TURN_TOKEN|>'],
   // tulu uses the same <|...|> role markers as its base.
   tulu:       ['<|user|>', '<|assistant|>', '<|system|>'],
   // harmony (gpt-oss), deepseek, granite, custom: intentionally no extra stops.
