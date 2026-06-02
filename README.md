@@ -10,8 +10,9 @@ This guide assumes you've never set up anything like this before. Take it one st
 - **Llama** — working
 - **Gemma** — working
 - **DeepSeek** — working
-- **Mistral** — hit and miss [cydonia works]
+- **Mistral** — hit and miss [cydonia works, midnight violet works]
 - **Granite** — working
+- **Command R** — working
 ---
 
 ## What you're actually setting up
