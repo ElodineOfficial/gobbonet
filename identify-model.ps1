@@ -118,20 +118,54 @@ function Get-TemplateHash {
     return ([System.BitConverter]::ToString($hash) -replace '-', '').ToLower()
 }
 
+# Does a candidate .jinja actually contain a usable chat template, or is it
+# junk we must NOT hand to llama-server?
+#
+# The motivating bug: a sidecar shipped next to a model was a *failed download*
+# whose entire body was the 15-byte HTTP 404 string "Entry not found". Handed to
+# llama-server via --chat-template-file, that becomes a constant-string
+# "template" -- it renders to the same ~3 words for every turn, the model never
+# sees the conversation, and it free-associates (in our case it rambled about
+# "tekken", because the only other text in scope was the template's own name).
+#
+# A real Jinja chat template always contains control/output markers ({% ... %}
+# or {{ ... }}). Anything without them (empty file, whitespace, an error body)
+# is rejected here so we fall through to the built-in template instead.
+function Test-IsUsableTemplate {
+    param([string]$Path)
+    try {
+        if (-not (Test-Path $Path)) { return $false }
+        $raw = [System.IO.File]::ReadAllText($Path)
+    } catch { return $false }
+    if ($null -eq $raw) { return $false }
+    $t = $raw.Trim([char]0).Trim()
+    if ($t.Length -lt 16) { return $false }              # too short to be real
+    if ($t -ieq 'Entry not found') { return $false }     # classic HF/404 body
+    if (-not ($t.Contains('{%') -or $t.Contains('{{'))) { return $false }
+    return $true
+}
+
+# Match a .jinja sidecar to a GGUF stem. The label may be joined to the stem by
+# '.', '_' or '-' (e.g. "<stem>.granite.jinja", "<stem>_mistral-v7-tekken.jinja"),
+# or be a bare "<stem>.jinja". An earlier version accepted ONLY a literal '.',
+# which silently ignored the underscore-joined sidecars people actually ship.
+function Test-SidecarNameMatch {
+    param([string]$NameLc, [string]$StemLc)
+    if ($NameLc -eq ($StemLc + '.jinja')) { return $true }
+    return ($NameLc.StartsWith($StemLc + '.') -or
+            $NameLc.StartsWith($StemLc + '_') -or
+            $NameLc.StartsWith($StemLc + '-'))
+}
+
 function Find-SidecarTemplate {
     param([string]$GgufPath)
     $dir = Split-Path $GgufPath -Parent
     if (-not $dir) { $dir = '.' }
-    $stem = (Split-Path $GgufPath -Leaf) -replace '(?i)\.gguf$', ''
-    $known = @('mistral-v1','mistral-v3','mistral-v3-tekken','mistral-v7','mistral-v7-tekken','llama2','llama3','chatml','gemma','phi3','deepseek','deepseek3','zephyr','vicuna','granite')
-    $prefix = ($stem + '.').ToLower()
+    $stemLc = ((Split-Path $GgufPath -Leaf) -replace '(?i)\.gguf$', '').ToLower()
     $files  = Get-ChildItem -Path $dir -Filter '*.jinja' -File -ErrorAction SilentlyContinue
     foreach ($f in $files) {
-        $n = $f.Name
-        if (-not $n.ToLower().StartsWith($prefix)) { continue }
-        $mid = $n.Substring($stem.Length + 1)
-        $mid = ($mid -replace '(?i)\.jinja$', '').ToLower()
-        if ($known -contains $mid) { return $mid }
+        if ((Test-SidecarNameMatch $f.Name.ToLower() $stemLc) -and
+            (Test-IsUsableTemplate (Join-Path $dir $f.Name))) { return $f.Name }
     }
     return ''
 }
@@ -145,55 +179,98 @@ function Get-ModelInfo {
         maxCtx = 131072; useJinja = 1; chatTemplate = ''; chatTemplateFile = ''; templateHash = ''
     }
 
+    # --- SIDECAR CHECK FIRST ---
+    # Find a sidecar template if one exists, so it overrides the hardcoded
+    # safety nets below. We only accept it if (a) its name matches the GGUF
+    # stem (',' '_' or '-' separator) AND (b) its CONTENTS are a real Jinja
+    # template -- an empty file or a failed-download error body is rejected so
+    # we fall through to the built-in instead of feeding llama-server junk.
+    $dir = Split-Path $Path -Parent
+    if (-not $dir) { $dir = '.' }
+    $sidecarFile = Find-SidecarTemplate -GgufPath $Path
+
+    if ($sidecarFile -ne '') {
+        $rec.chatTemplateFile = "models\$sidecarFile"
+        $rec.useJinja = 1
+        if ($sidecarFile -match 'mistral') { $rec.family = 'mistral'; $rec.id = 'mistral' }
+        elseif ($sidecarFile -match 'granite') { $rec.family = 'granite'; $rec.id = 'granite' }
+    }
+
     $meta = Read-GgufMeta -Path $Path
 
-# --- HARD OVERRIDES ---
-    # 1. Mistral variants (Cydonia, Nemo, Lotus)
-    if ($name -match 'cydonia|asmodeus|mistral[-_.]?small') {
-        $rec.family = 'mistral'; $rec.id = 'mistral-small'; $rec.useJinja = 1; $rec.chatTemplate = ''
-        return $rec
-    }
-    if ($name -match 'nemo|violet[-_]?lotus|rocinante|magnum') {
-        $rec.family = 'mistral'; $rec.id = 'mistral-nemo'; $rec.useJinja = 1; $rec.chatTemplate = ''
-        return $rec
-    }
-    # 2. Granite
-    #
-    # Granite GGUFs ship a tool-calling Jinja chat template (available_tools /
-    # assistant_tool_call / tool_response roles, `tool | tojson`). On recent
-    # llama.cpp builds the startup autoparser tries to synthesize a tool-call
-    # example from that template and aborts ("Failed to generate tool call
-    # example" / "Unable to generate parser for this template"), so the server
-    # never comes up under --jinja.
-    #
-    # The bare built-in name (--chat-template granite) does NOT work on these
-    # builds either: llama-server treats "granite" as a *literal* template, so
-    # /apply-template emits just the word "granite" and the model is fed no
-    # conversation at all (proven via gobboDiag). The robust fix is a cleaned,
-    # no-tools template FILE passed with --chat-template-file: it loads (no
-    # tools => no autoparser crash) and formats correctly. We store just the
-    # filename; the launch paths resolve it against the project root, same as
-    # they do for the server exe and launch script. (Chat-only; no tools.)
-    if ($name -match 'granite') {
-        $rec.family = 'granite'; $rec.id = 'granite'
-        $rec.useJinja = 1; $rec.chatTemplate = ''; $rec.chatTemplateFile = 'granite.jinja'
-        if ($name -match 'think') { $rec.thinkingFormat = 'deepseek' }
-        return $rec
-    }
-    # 3. Llama 3 / 3.1 / 3.2 (The fix for the "junk" output)
-    if ($name -match 'llama[-_]?[3]') {
-        $rec.family = 'llama'; $rec.id = 'llama'; $rec.useJinja = 1; $rec.chatTemplate = ''
-        return $rec
-    }
-    # ----------------------
-
-    if ($null -eq $meta) {
-        $side = Find-SidecarTemplate -GgufPath $Path
-        if ($side -ne '') {
-            if ($side -like 'mistral*') { $rec.family = 'mistral'; $rec.id = 'mistral' }
-            $rec.useJinja = 0; $rec.chatTemplate = $side
+    if ($rec.chatTemplateFile -eq '') {
+        # --- HARD OVERRIDES ---
+        # 1. Mistral variants (Cydonia, Nemo, Lotus)
+        #
+        # Mistral Small 24B and its mergekit merges (Asmodeus, Cydonia, ...) ship
+        # an embedded v7-tekken template, but on mergekit children the embedded
+        # template can be malformed (mergekit copies tokenizer_config from one
+        # parent at random). The reliable path is llama.cpp's built-in C++
+        # Mistral v7 template -- same pattern Nemo uses with mistral-v3-tekken
+        # below.
+        #
+        # IMPORTANT: we use the name "mistral-v7" here, NOT "mistral-v7-tekken".
+        # The "-tekken" v7 variant was added to llama.cpp's built-in name table
+        # much later than the v3 variants (which landed in PR #10572). On builds
+        # that predate it (e.g. b8941, the one this project ships), llama-server
+        # does NOT recognise "mistral-v7-tekken" as a built-in name. Because the
+        # string still begins with "mistral", llama-server's content-detector
+        # treats the literal text "mistral-v7-tekken" as the template body, which
+        # renders to that constant ~8-token string for EVERY request -- the model
+        # then never sees the conversation and just talks about "tekken". Using
+        # "mistral-v7" resolves to the real C++ template and renders correctly.
+        # The only difference from true tekken is a trailing space after [INST] /
+        # [SYSTEM_PROMPT]; harmless for inference. If you upgrade to a llama.cpp
+        # build whose built-in table includes "mistral-v7-tekken", you can switch
+        # this back for byte-exact tekken spacing.
+        if ($name -match 'cydonia|asmodeus|mistral[-_.]?small') {
+            $rec.family = 'mistral'; $rec.id = 'mistral-small'
+            $rec.useJinja = 0; $rec.chatTemplate = 'mistral-v7'
             return $rec
         }
+        if ($name -match 'nemo|violet[-_]?lotus|rocinante|magnum') {
+            $rec.family = 'mistral'; $rec.id = 'mistral-nemo'
+            $rec.useJinja = 0; $rec.chatTemplate = 'mistral-v3-tekken'
+            return $rec
+        }
+        # 2. Granite
+        if ($name -match 'granite') {
+            $rec.family = 'granite'; $rec.id = 'granite'; $rec.useJinja = 1; $rec.chatTemplate = ''
+            if ($name -match 'think') { $rec.thinkingFormat = 'deepseek' }
+            return $rec
+        }
+        # 3. Llama 3 / 3.1 / 3.2 (The fix for the "junk" output)
+        if ($name -match 'llama[-_]?[3]') {
+            $rec.family = 'llama'; $rec.id = 'llama'; $rec.useJinja = 1; $rec.chatTemplate = ''
+            return $rec
+        }
+        # 4. Command R (Cohere) — 7B (12-2024) is Cohere2ForCausalLM, 35B
+        # variants (08-2024, v01) are CohereForCausalLM. Both ship a clean
+        # embedded jinja template using <|START_OF_TURN_TOKEN|> / <|*_TOKEN|>
+        # markers, and the pinned llama.cpp build (b9294) renders them fine
+        # with --jinja, so no built-in-template override is needed. Filename
+        # match handles the common case (drop the bartowski GGUF into models\)
+        # where the GGUF-metadata branch below would also catch it via the
+        # arch.StartsWith('cohere') rule; the filename rule is the fast path.
+        #
+        # No thinking format — Command R is instruct-style output, not
+        # chain-of-thought. (Cohere's RAG/tool-calling extensions add a
+        # <|START_RESPONSE|> token but that's orthogonal to thinking and
+        # the chat-side parser doesn't need to know about it.)
+        if ($name -match 'command[-_.]?r|c4ai') {
+            $rec.family = 'cohere'; $rec.useJinja = 1; $rec.chatTemplate = ''
+            if ($name -match 'r7b|r[-_.]?7b|7b[-_.]?12[-_.]?2024') {
+                $rec.id = 'command-r7b'
+            } else {
+                $rec.id = 'command-r-35b'
+            }
+            return $rec
+        }
+        # ----------------------
+    }
+
+    if ($null -eq $meta) {
+        if ($rec.chatTemplateFile -ne '') { return $rec }
         if ($name -match 'think|reason') { $rec.thinkingFormat = 'deepseek' }
         return $rec
     }
@@ -206,14 +283,10 @@ function Get-ModelInfo {
     $hash = Get-TemplateHash -Template $t
     $rec.templateHash = $hash
 
-    if ($hash -eq '') {
-        $side = Find-SidecarTemplate -GgufPath $Path
-        if ($side -ne '') {
-            if ($side -like 'mistral*') { $rec.family = 'mistral'; $rec.id = 'mistral' }
-            elseif ($arch -ne '')       { $rec.family = $arch;     $rec.id = $arch }
-            $rec.useJinja = 0; $rec.chatTemplate = $side
-            return $rec
-        }
+    # If we already resolved a sidecar template above, check for thinking formats and return
+    if ($rec.chatTemplateFile -ne '') {
+        if ($arch -match 'deepseek' -or $t.Contains('<think>')) { $rec.thinkingFormat = 'deepseek' }
+        return $rec
     }
 
     if ($hash -ne '' -and $HashDerivations.ContainsKey($hash)) {
@@ -229,6 +302,23 @@ function Get-ModelInfo {
 
     if ($t.Contains('<|channel|>') -or $arch.Contains('gpt-oss') -or $arch.Contains('gptoss') -or $arch.Contains('gpt_oss')) {
         $rec.family = 'gpt-oss'; $rec.id = 'gpt-oss'; $rec.useJinja = 1; $rec.thinkingFormat = 'harmony'
+    } elseif ($t.Contains('<|START_OF_TURN_TOKEN|>') -or $arch.StartsWith('cohere')) {
+        # Command R / R+ / R7B. Cohere's tokens are unambiguous -- no other
+        # family uses START_OF_TURN_TOKEN. Both Cohere (35B) and Cohere2 (7B)
+        # arch values get caught by StartsWith('cohere'). thinkingFormat
+        # stays 'none' (Command R doesn't emit chain-of-thought; the
+        # <|START_RESPONSE|> token Cohere uses for RAG is a response marker,
+        # not a thinking marker, and the chat parser doesn't need it).
+        $rec.family = 'cohere'; $rec.useJinja = 1
+        # Distinguish 7B from 35B/R+. context_length and arch are the most
+        # reliable signals (Cohere2 is 7B-specific), with filename as a
+        # secondary check for older 35B GGUFs that happen to ship with a
+        # context override.
+        if ($arch -eq 'cohere2' -or $name -match 'r7b|r[-_.]?7b') {
+            $rec.id = 'command-r7b'
+        } else {
+            $rec.id = 'command-r-35b'
+        }
     } elseif ($t.Contains('<|im_user|>') -and $t.Contains('<|im_middle|>')) {
         $rec.family = 'moonshot'; $rec.id = 'moonshot'; $rec.useJinja = 1
     } elseif ($t.Contains('<|im_start|>')) {

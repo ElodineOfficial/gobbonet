@@ -71,7 +71,7 @@ for /f "usebackq delims=" %%S in ("!SECRET_FILE!") do set "ACCESS_SECRET=%%S"
 :: detection. You can also set these manually if you know your model.
 ::
 :: MODEL_THINK_FMT — how the model emits chain-of-thought:
-::   none     = no thinking         (Llama, Mistral, Phi, Gemma 3 base)
+::   none     = no thinking         (Llama, Mistral, Phi, Gemma 3 base, Command R)
 ::   deepseek = <think>...</think>  (R1, Qwen3, QwQ, GLM thinking, Granite, Hunyuan)
 ::   harmony  = <|channel|>...      (gpt-oss-20b, gpt-oss-120b)
 ::   gemma    = <channel|>          (Gemma 4)
@@ -103,6 +103,14 @@ set "MODEL_THINK_FMT=none"
 ::     mistral-v1, mistral-v3, mistral-v3-tekken, mistral-v7, mistral-v7-tekken,
 ::     llama2, llama3, chatml, gemma, gpt-oss, deepseek3, ... (see llama-server
 ::     --help for the full list).
+::
+::   CAUTION: "mistral-v7-tekken" was added to llama.cpp's built-in name table
+::   only in recent builds; the build this project pins does NOT know it. If you
+::   set an unrecognized name, llama-server treats the literal text as the
+::   template body and the model is fed that constant string instead of your
+::   chat (it ends up babbling about "tekken"). Use "mistral-v7" for Mistral
+::   Small 24B / its finetunes -- the guard further down rewrites the -tekken
+::   form to it automatically, but don't rely on that; prefer the working name.
 ::
 ::   The :identify_model block below sets these per family.
 set "MODEL_USE_JINJA=1"
@@ -521,7 +529,7 @@ set "REC=0"
 :: payload is pure single-quoted PowerShell + string concatenation (no
 :: embedded double quotes, no pipes, no '!', output is pure ASCII) so the
 :: redirect and for/f read it back cleanly regardless of console encoding.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; try { $h = ConvertFrom-Json (Get-Content -Raw '%~dp0hardware.json') } catch { $h = $null }; $min=@{1=6;2=4;3=8;4=8;5=16;6=18;7=10;8=12}; if (-not $h) { 'HW_OK=0'; 'REC=0'; 'HW_TIER=unknown'; 'HW_VRAM=0'; 'HW_RAM=0'; 'HW_DISK=0'; foreach($i in 1..8){ 'MK_' + $i + '=' }; exit }; $v=[int]$h.gpu.vram_gb; $t=[string]$h.recommended_tier; $ram=[int]$h.ram_gb; $disk=[int]$h.disk.free_gb; $rec=0; if($t -eq 'cpu_only'){ $rec=2 } elseif($v -ge 16){ $rec=5 } elseif($v -ge 12){ $rec=8 } elseif($v -ge 8){ $rec=4 } elseif($v -ge 6){ $rec=1 } else { $rec=2 }; 'HW_OK=1'; 'HW_TIER=' + $t; 'HW_VRAM=' + $v; 'HW_RAM=' + $ram; 'HW_DISK=' + $disk; 'REC=' + $rec; foreach($i in 1..8){ if($i -eq $rec){ $m='[ RECOMMENDED FOR YOUR PC ]' } elseif($t -eq 'cpu_only'){ if($min[$i] -le 6){ $m='' } else { $m='[ likely too slow without a GPU ]' } } elseif($v -ge $min[$i]){ $m='' } else { $m='[ needs ~' + $min[$i] + ' GB VRAM - will be slow ]' }; 'MK_' + $i + '=' + $m }" > "%~dp0.hw-parsed.env" 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; try { $h = ConvertFrom-Json (Get-Content -Raw '%~dp0hardware.json') } catch { $h = $null }; $min=@{1=6;2=4;3=8;4=8;5=16;6=18;7=10;8=12;9=8;10=24}; if (-not $h) { 'HW_OK=0'; 'REC=0'; 'HW_TIER=unknown'; 'HW_VRAM=0'; 'HW_RAM=0'; 'HW_DISK=0'; foreach($i in 1..10){ 'MK_' + $i + '=' }; exit }; $v=[int]$h.gpu.vram_gb; $t=[string]$h.recommended_tier; $ram=[int]$h.ram_gb; $disk=[int]$h.disk.free_gb; $rec=0; if($t -eq 'cpu_only'){ $rec=2 } elseif($v -ge 16){ $rec=5 } elseif($v -ge 12){ $rec=8 } elseif($v -ge 8){ $rec=4 } elseif($v -ge 6){ $rec=1 } else { $rec=2 }; 'HW_OK=1'; 'HW_TIER=' + $t; 'HW_VRAM=' + $v; 'HW_RAM=' + $ram; 'HW_DISK=' + $disk; 'REC=' + $rec; foreach($i in 1..10){ if($i -eq $rec){ $m='[ RECOMMENDED FOR YOUR PC ]' } elseif($t -eq 'cpu_only'){ if($min[$i] -le 6){ $m='' } else { $m='[ likely too slow without a GPU ]' } } elseif($v -ge $min[$i]){ $m='' } else { $m='[ needs ~' + $min[$i] + ' GB VRAM - will be slow ]' }; 'MK_' + $i + '=' + $m }" > "%~dp0.hw-parsed.env" 2>nul
 
 if exist "%~dp0.hw-parsed.env" (
     for /f "usebackq tokens=1,* delims==" %%K in ("%~dp0.hw-parsed.env") do set "%%K=%%L"
@@ -559,6 +567,10 @@ echo.
 echo     [4] Llama 3.1 8B Instruct  Q6_K  ~6.1 GB  !MK_4!
 echo         Meta — solid all-rounder, 128K context
 echo.
+echo     [9] Command R 7B (12-2024) Q6_K  ~6.6 GB  !MK_9!
+echo         Cohere — strong instruction following, 128K
+echo         Multilingual; no chain-of-thought
+echo.
 echo   ── LARGE (fits ~16 GB VRAM) ─────────────────────
 echo.
 echo     [5] Gemma 4 26B-A4B MoE    Q4_K_S  ~16 GB  !MK_5!
@@ -577,9 +589,13 @@ echo     [8] gpt-oss 20B            MXFP4   ~12 GB  !MK_8!
 echo         OpenAI — open-weights reasoning model
 echo         Uses Harmony channel format for CoT
 echo.
+echo    [10] Command R 35B (08-2024) Q4_K_S ~20 GB  !MK_10!
+echo         Cohere — heavy chat model, needs ~24 GB VRAM
+echo         Multilingual strength, 128K context
+echo.
 echo   ── MANUAL ───────────────────────────────────────
 echo.
-echo     [9] Skip — I'll add my own .gguf
+echo    [11] Skip — I'll add my own .gguf
 echo         Place any GGUF in the models\ folder
 echo.
 echo   Note: If a download link fails, check the updated
@@ -592,7 +608,7 @@ if not "!REC!"=="0" (
     echo.
 )
 set "MODEL_CHOICE="
-set /p "MODEL_CHOICE=  Your choice [1-9]: "
+set /p "MODEL_CHOICE=  Your choice [1-11]: "
 if not defined MODEL_CHOICE if not "!REC!"=="0" set "MODEL_CHOICE=!REC!"
 
 :: VRAM safety net -- if the chosen model wants more GPU memory than we
@@ -713,6 +729,30 @@ if "!MODEL_CHOICE!"=="8" (
     set "MODEL_FAMILY=gpt-oss"
     set "MODEL_MAX_CTX=131072"
     set "MODEL_THINK_FMT=harmony"
+    set "CTX_SIZE=16384"
+    set "KV_CACHE_TYPE=q8_0"
+    goto :download_model
+)
+if "!MODEL_CHOICE!"=="9" (
+    set "DL_REPO=bartowski/c4ai-command-r7b-12-2024-GGUF"
+    set "DL_FILE=c4ai-command-r7b-12-2024-Q6_K.gguf"
+    set "MODEL_ID=command-r7b"
+    set "MODEL_DISPLAY=Command R 7B (12-2024)"
+    set "MODEL_FAMILY=cohere"
+    set "MODEL_MAX_CTX=131072"
+    set "MODEL_THINK_FMT=none"
+    set "CTX_SIZE=32768"
+    set "KV_CACHE_TYPE=q8_0"
+    goto :download_model
+)
+if "!MODEL_CHOICE!"=="10" (
+    set "DL_REPO=bartowski/c4ai-command-r-08-2024-GGUF"
+    set "DL_FILE=c4ai-command-r-08-2024-Q4_K_S.gguf"
+    set "MODEL_ID=command-r-35b"
+    set "MODEL_DISPLAY=Command R 35B (08-2024)"
+    set "MODEL_FAMILY=cohere"
+    set "MODEL_MAX_CTX=131072"
+    set "MODEL_THINK_FMT=none"
     set "CTX_SIZE=16384"
     set "KV_CACHE_TYPE=q8_0"
     goto :download_model
@@ -983,6 +1023,36 @@ echo.
 ::   3. Neither -- plain --jinja, honoring the GGUF's embedded template.
 set "JINJA_FLAG="
 set "CHAT_TEMPLATE_FLAG="
+
+:: Guard (defense-in-depth): the pinned llama.cpp build does not recognize
+:: "mistral-v7-tekken" as a built-in name, so passing it bare to --chat-template
+:: makes the server treat the literal text as the template body -- the model is
+:: then fed a constant string and rambles about "tekken". Rewrite to the name
+:: that IS registered. (identify-model.ps1 already emits mistral-v7, but a user
+:: could hand-set this from the CONFIG comment above, or a stale value could
+:: arrive some other way -- so we normalize here too.)
+if /i "!MODEL_CHAT_TEMPLATE!"=="mistral-v7-tekken" (
+    set "MODEL_CHAT_TEMPLATE=mistral-v7"
+    set "MODEL_USE_JINJA=0"
+    echo  [..] Normalized chat template mistral-v7-tekken -^> mistral-v7 ^(unrecognized on pinned build^).
+)
+
+:: Guard: if a template FILE was specified, make sure it is actually a Jinja
+:: template and not an empty file or a failed download (the classic "Entry not
+:: found" 404 body). A bad file fed via --chat-template-file renders to a
+:: constant string for every turn, exactly like the -tekken trap above. If it
+:: looks unusable, drop it and fall back to the embedded template via --jinja.
+if not "!MODEL_CHAT_TEMPLATE_FILE!"=="" (
+    set "TEMPLATE_FILE_PATH=%~dp0!MODEL_CHAT_TEMPLATE_FILE!"
+    if exist "!TEMPLATE_FILE_PATH!" (
+        findstr /c:"{%%" /c:"{{" "!TEMPLATE_FILE_PATH!" >nul 2>&1
+        if errorlevel 1 (
+            echo  [!!] Template file has no Jinja markers ^(empty / failed download?^): !MODEL_CHAT_TEMPLATE_FILE!
+            echo       Ignoring it and using the embedded template instead.
+            set "MODEL_CHAT_TEMPLATE_FILE="
+        )
+    )
+)
 
 if not "!MODEL_CHAT_TEMPLATE_FILE!"=="" (
     rem Resolve the filename against the project root (same dir as this
