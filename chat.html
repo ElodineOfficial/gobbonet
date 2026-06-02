@@ -1351,6 +1351,17 @@ const MODEL_REGISTRY = {
     maxCtx: 131072, defaultCtx: 16384, thinkingFormat: 'deepseek',
     hint: 'IBM Granite reasoning models emit <think>...</think> blocks when thinking is enabled.'
   },
+  // ── Cohere Command R family ─────────────────────────────────────
+  'command-r7b': {
+    name: 'Command R 7B (12-2024)', family: 'cohere',
+    maxCtx: 131072, defaultCtx: 32768, thinkingFormat: 'none',
+    hint: 'Cohere Command R 7B (Cohere2 arch) supports 128K context. Strong instruction following, multilingual, no chain-of-thought.'
+  },
+  'command-r-35b': {
+    name: 'Command R 35B (08-2024)', family: 'cohere',
+    maxCtx: 131072, defaultCtx: 16384, thinkingFormat: 'none',
+    hint: 'Cohere Command R 35B (08-2024 refresh of v01). Heavy chat model; Q4_K_S needs ~20 GB VRAM at modest context.'
+  },
   'custom': {
     name: 'Custom GGUF', family: 'custom',
     maxCtx: 131072, defaultCtx: 24576, thinkingFormat: 'none',
@@ -1483,6 +1494,19 @@ function identifyModelFromFilename(filename) {
                                   return { id: 'mistral-small', family: 'mistral', thinkingFormat: 'none' };
   if (/mistral|mixtral/.test(f))  return { id: 'mistral',  family: 'mistral',  thinkingFormat: 'none' };
   if (/phi/.test(f))              return { id: 'phi',      family: 'phi',      thinkingFormat: 'none' };
+
+  // Command R (Cohere). Match BEFORE the generic /think|reason/ fallback —
+  // Cohere has "reasoning" in some model card copy and we don't want that
+  // bleeding into thinkingFormat: 'deepseek'. The 7B (12-2024 release) is
+  // Cohere2 arch and the only Command R variant we recommend for typical
+  // 8-16 GB VRAM. Filenames in the wild: c4ai-command-r7b-12-2024-Q*.gguf,
+  // c4ai-command-r-08-2024-Q*.gguf, c4ai-command-r-v01-Q*.gguf, plus
+  // abliterated/finetune variants. Match r7b first so we don't tag a 7B as
+  // the 35B; bare "command-r" / "c4ai" falls through to the 35B id.
+  if (/c4ai[\-_.]?command[\-_.]?r[\-_.]?7|command[\-_.]?r[\-_.]?7b/.test(f))
+                                  return { id: 'command-r7b',  family: 'cohere', thinkingFormat: 'none' };
+  if (/command[\-_.]?r|c4ai/.test(f))
+                                  return { id: 'command-r-35b', family: 'cohere', thinkingFormat: 'none' };
 
   // Generic "thinking" or "reasoning" in filename → assume deepseek-style
   if (/think|reason/.test(f))     return { id: 'custom',   family: 'custom',   thinkingFormat: 'deepseek' };
@@ -3177,6 +3201,11 @@ async function gobboDiag() {
         eos: (p.eos_token ?? (p.default_generation_settings && p.default_generation_settings.eos_token)) ?? null,
         n_ctx: (p.default_generation_settings && (p.default_generation_settings.n_ctx ?? p.default_generation_settings.n_ctx_train)) ?? null
       };
+    } else if (r.status === 401) {
+      // The /llm/* proxy rejects this because the file-server login session
+      // has expired (NOT a llama-server API key problem). Reload the page,
+      // log in, and re-run gobboDiag().
+      out.notes.push('/props returned 401 — your file-server login session has expired. Reload the page, log in again, then re-run gobboDiag().');
     } else {
       out.notes.push('/props returned ' + r.status);
     }
@@ -3198,6 +3227,13 @@ async function gobboDiag() {
       if (r.ok) {
         const j = await r.json();
         out.appliedPrompt = (typeof j.prompt === 'string') ? j.prompt : JSON.stringify(j);
+      } else if (r.status === 401) {
+        const already = out.notes.some(n => n.indexOf('/props returned 401') === 0);
+        if (!already) {
+          out.notes.push('/apply-template returned 401 — file-server login session expired. Reload the page, log in, then re-run gobboDiag().');
+        } else {
+          out.notes.push('/apply-template also 401 (same session-expiry cause as /props).');
+        }
       } else {
         out.notes.push('/apply-template returned ' + r.status + ' (older build? then use /props template above)');
       }
@@ -4839,10 +4875,46 @@ function saveEdit(index) {
   if (!thread) return;
 
   const msg = thread.messages[index];
-  msg.content = newContent;
 
   if (msg.role === 'user') {
-    // User edit: truncate everything after and regenerate
+    // Capture the prior wording as a variant BEFORE we overwrite anything,
+    // so the user can flip back to it via the ◀ ▶ navigator. Symmetric
+    // with rerollMessage() on the assistant side: every edit is preserved.
+    //
+    // First-time edit on a plain user message: promote the existing
+    // content (plus any search results / attachments that belonged to
+    // that wording) into variant 0 so it isn't lost. Subsequent edits:
+    // sync whatever's currently visible into the active slot first
+    // (covers the case where the user flipped to an older variant and
+    // THEN hit Edit — we'd otherwise drop the flipped-to wording).
+    if (!Array.isArray(msg.variants) || msg.variants.length === 0) {
+      msg.variants = [{
+        content:        msg.content || '',
+        timestamp:      msg.timestamp || Date.now(),
+        searchData:     msg.searchData,
+        attachmentText: msg.attachmentText,
+        attachments:    msg.attachments
+      }];
+    } else {
+      syncActiveVariant(msg);
+    }
+
+    // Append the new wording as a fresh variant and switch to it.
+    // Search results and attachments don't carry forward — they belong
+    // to the prior wording. If search is enabled and applies to the new
+    // wording, the regenerate cycle below will populate searchData on
+    // the active message via sendMessage's search step path.
+    // (We use the same {} shape the assistant reroll path uses so
+    // applyVariantToMessage's delete-when-absent branches fire and the
+    // top-level msg drops the stale fields cleanly.)
+    msg.variants.push({
+      content:   newContent,
+      timestamp: Date.now()
+    });
+    msg.activeVariant = msg.variants.length - 1;
+    applyVariantToMessage(msg);
+
+    // Truncate everything after and regenerate (existing behavior).
     thread.messages = thread.messages.slice(0, index + 1);
     state.editingIndex = null;
     saveState();
@@ -4853,6 +4925,7 @@ function saveEdit(index) {
     // AI edit: save in place, no regeneration.
     // If this message tracks reroll variants, mirror the edit into
     // the active variant so flipping away and back doesn't revert.
+    msg.content = newContent;
     if (Array.isArray(msg.variants)) {
       syncActiveVariant(msg);
     }
@@ -4873,25 +4946,51 @@ function deleteMessage(index) {
 }
 
 /* ----------------------------------------------------------------
-   REROLL VARIANTS (in-thread regeneration history)
+   VARIANTS (in-thread alternative history)
 
-   Branches stay intact for the "spin off into a sibling thread"
-   case. Reroll, on the other hand, keeps every regeneration as a
-   flippable variant on the same assistant message — A, B, C, …
-   navigable with ◀ ▶ so a good response three rerolls back isn't
-   gone, it's just a click away.
+   Both directions of the conversation use the same variant
+   machinery, with different triggers:
+
+     ASSISTANT — every Reroll keeps the prior generation as a
+     flippable variant on the same message. A good response three
+     rerolls back isn't gone, it's just a click away.
+
+     USER — every Edit keeps the prior wording as a flippable
+     variant on the same message. Lets you thumb through different
+     phrasings without losing them.
+
+   In both cases the ◀ ▶ navigator shows the variants for that
+   message; the rest of the conversation is unaffected by flipping.
+   For "what would the conversation look like if I'd taken a
+   different path here?" use Branch — that's the heavier sibling-
+   thread tool. Variants are the cheap in-place history.
 
    Data shape (all fields optional; absent = legacy single-variant):
-     msg.variants     = [ {content, reasoning, searchData, timestamp}, ... ]
+     msg.variants     = [ {content, reasoning, searchData,
+                           attachmentText, attachments, timestamp}, ... ]
      msg.activeVariant = index into variants
 
-   The top-level msg.content / msg.reasoning / msg.searchData always
-   MIRROR the active variant. That's deliberate: every other piece
-   of code in this app (context builder, token estimator, lore
-   summariser, copy/edit/delete, search-results renderer) reads
-   m.content directly. Mirroring means none of them needs to learn
-   what a variant is — the active one IS the message, from their
-   point of view. Variants are an additive layer.
+   Fields are stored per-variant whether or not they apply to the
+   role — reasoning/searchData are typically assistant-side,
+   attachmentText/attachments are user-side, but storing all of
+   them uniformly keeps sync/apply role-agnostic.
+
+   The top-level msg.* fields always MIRROR the active variant.
+   That's deliberate: every other piece of code in this app
+   (context builder, token estimator, lore summariser, copy/edit/
+   delete, search-results renderer) reads m.content directly.
+   Mirroring means none of them needs to learn what a variant is —
+   the active one IS the message, from their point of view.
+   Variants are an additive layer.
+
+   Flipping a USER variant is visual + state-update only: msg.content
+   becomes the flipped-to wording so any subsequent regenerate sees
+   it, but no regenerate fires automatically. The downstream AI
+   reply still reflects whichever wording was active at its last
+   generation — possibly mismatched with the currently-shown user
+   variant. That's intentional; auto-regenerating on every flip
+   would make ◀ ▶ destructive and burn tokens. To commit to a
+   different wording, flip to it and Reroll the AI message below.
 ---------------------------------------------------------------- */
 
 /** Copy the message's current visible fields into the active variant slot. */
@@ -4902,9 +5001,15 @@ function syncActiveVariant(msg) {
   const v = msg.variants[idx];
   v.content   = msg.content   || '';
   v.reasoning = msg.reasoning || '';
-  // searchData is optional — store as-is (including undefined) so
-  // a variant that had no search results doesn't inherit a stale one.
-  v.searchData = msg.searchData;
+  // Optional fields — store as-is (including undefined) so a variant that
+  // had no search results / no attachments doesn't inherit a stale set
+  // from whatever was on the message a moment ago. searchData applies to
+  // both roles (user messages get it from the web-search step in
+  // sendMessage; assistant messages don't currently use it but the field
+  // is reserved). attachmentText / attachments are user-only in practice.
+  v.searchData     = msg.searchData;
+  v.attachmentText = msg.attachmentText;
+  v.attachments    = msg.attachments;
   v.timestamp  = msg.timestamp || v.timestamp || Date.now();
 }
 
@@ -4921,21 +5026,34 @@ function applyVariantToMessage(msg) {
   } else {
     delete msg.searchData;
   }
+  // Same delete-when-absent pattern for user-side fields, so flipping
+  // back to a variant that didn't have attachments doesn't surface a
+  // stale chip row from the next variant over.
+  if (v.attachmentText !== undefined && v.attachmentText !== null) {
+    msg.attachmentText = v.attachmentText;
+  } else {
+    delete msg.attachmentText;
+  }
+  if (Array.isArray(v.attachments)) {
+    msg.attachments = v.attachments;
+  } else {
+    delete msg.attachments;
+  }
   if (v.timestamp) msg.timestamp = v.timestamp;
 }
 
 /**
- * Flip the displayed variant on an assistant message. delta is
- * -1 (previous) or +1 (next). No-op if the move would go out of
- * bounds, if the message has fewer than 2 variants, or if a
- * generation is currently in flight (don't yank the rug out from
- * under streaming).
+ * Flip the displayed variant on a message (user or assistant).
+ * delta is -1 (previous) or +1 (next). No-op if the move would
+ * go out of bounds, if the message has fewer than 2 variants,
+ * or if a generation is currently in flight (don't yank the rug
+ * out from under streaming).
  */
 function switchVariant(messageIndex, delta) {
   const thread = getActiveThread();
   if (!thread || isGenerating) return;
   const msg = thread.messages[messageIndex];
-  if (!msg || msg.role !== 'assistant') return;
+  if (!msg) return;
   if (!Array.isArray(msg.variants) || msg.variants.length < 2) return;
 
   // Capture any in-place edits the user made to the currently
@@ -6038,6 +6156,26 @@ function renderMessages() {
           <button class="msg-action-btn btn-edit" onclick="editMessage(${i})" title="Edit">Edit</button>
           <button class="msg-action-btn btn-delete" onclick="deleteMessage(${i})" title="Delete">Del</button>
           <button class="msg-action-btn" onclick="copyMessage(${i})" title="Copy">Copy</button>`;
+
+        // Edit-variant navigator: shown on any user message that has been
+        // edited at least once (variants.length > 1 because the first edit
+        // promotes the original wording to variant 0 and appends the new
+        // one as variant 1). Flipping is visual-only — the AI reply below
+        // doesn't auto-regenerate. To explore a different conversational
+        // path from a prior wording, flip to it and Reroll the AI reply,
+        // or use Branch.
+        if (Array.isArray(m.variants) && m.variants.length > 1) {
+          const cur = (m.activeVariant ?? 0) + 1;
+          const total = m.variants.length;
+          const atFirst = (m.activeVariant ?? 0) === 0;
+          const atLast  = (m.activeVariant ?? 0) === total - 1;
+          actionsHtml += `
+          <span class="variant-nav" title="Flip between prior wordings — every edit is kept. Flipping doesn't regenerate the AI reply below; for that, flip then Reroll, or use Branch.">
+            <button class="variant-nav-btn" ${atFirst ? 'disabled' : ''} onclick="switchVariant(${i}, -1)" title="Previous wording">◀</button>
+            <span class="variant-nav-label">${cur}/${total}</span>
+            <button class="variant-nav-btn" ${atLast ? 'disabled' : ''} onclick="switchVariant(${i}, 1)" title="Next wording">▶</button>
+          </span>`;
+        }
       } else {
         actionsHtml = `
           <button class="msg-action-btn btn-edit" onclick="editMessage(${i})" title="Edit">Edit</button>
