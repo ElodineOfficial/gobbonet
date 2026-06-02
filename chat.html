@@ -2847,6 +2847,28 @@ function persistSyncMeta() {
   } catch (_) {}
 }
 
+// True when the in-memory state is mid-flight and therefore unsafe to publish
+// as the cross-device source of truth: a generation is currently streaming, OR
+// the active thread ends in an empty assistant placeholder (a fresh send slot
+// or a freshly-blanked reroll slot) that hasn't been filled yet. Local saves
+// still happen normally; only the server push is held back until the state
+// settles. A settled thread never ends in an empty assistant message --
+// generation always fills content, and even aborts/errors write text -- so
+// this can defer a push but never starve a legitimate one.
+function stateSyncWouldBeTransient() {
+  if (isGenerating) return true;
+  try {
+    const t = getActiveThread();
+    if (t && Array.isArray(t.messages) && t.messages.length > 0) {
+      const last = t.messages[t.messages.length - 1];
+      if (last && last.role === 'assistant' && !((last.content || '').trim())) {
+        return true;
+      }
+    }
+  } catch (_) {}
+  return false;
+}
+
 /**
  * Debounced push to /state. Called from saveState(). Coalesces rapid
  * saves (typing, streaming tokens) into one network write every ~2s.
@@ -2862,6 +2884,17 @@ async function flushStateSync() {
   if (!STATE_SYNC_AVAILABLE) return;
   if (stateSync.inFlight) {
     // Another push is happening. Re-arm so we capture the latest.
+    stateSync.pushTimer = setTimeout(flushStateSync, 2000);
+    return;
+  }
+  // Never publish a mid-flight snapshot as the cross-device source of truth.
+  // While a generation is streaming -- or a fresh/rerolled assistant slot is
+  // still empty -- the latest state contains a blank reply. Defer and keep
+  // re-checking; the settled saveState() that runs when generation finishes
+  // leaves a complete snapshot in pendingJson for us to send safely. This is
+  // the fix for replies that "went blank" after a refresh: the server was
+  // being handed an in-progress snapshot that other devices then restored.
+  if (stateSyncWouldBeTransient()) {
     stateSync.pushTimer = setTimeout(flushStateSync, 2000);
     return;
   }
@@ -2890,6 +2923,13 @@ async function flushStateSync() {
     stateSync.status = 'error';
     stateSync.lastError = e.message || String(e);
     console.warn('[sync] Push failed:', stateSync.lastError);
+    // Don't drop the update. Requeue this snapshot (unless a newer one was
+    // queued while we were in flight) and retry with a short backoff, so a
+    // transient network blip can't leave the server holding a stale copy that
+    // a later boot might restore over good local data.
+    if (stateSync.pendingJson == null) stateSync.pendingJson = json;
+    if (stateSync.pushTimer) clearTimeout(stateSync.pushTimer);
+    stateSync.pushTimer = setTimeout(flushStateSync, 4000);
   } finally {
     stateSync.inFlight = false;
     updateSyncIndicator();
@@ -2944,7 +2984,29 @@ async function checkServerStateOnBoot() {
     await restoreFromServer({ silent: true });
   } else if (!localEmpty && serverIsNewer) {
     // Conflict: server has newer data than we know about. Don't auto-clobber.
-    showRestorePrompt(info);
+    //
+    // Defense in depth: a "newer" snapshot that is dramatically smaller than
+    // our local copy is almost always a partial/mid-flight snapshot (or a
+    // stale shape) rather than a legitimately newer conversation. Restoring it
+    // would blank out replies we still hold locally -- the exact failure this
+    // patch guards against. In that case keep local authoritative and
+    // re-publish it to heal the server, instead of prompting to overwrite good
+    // data. Trade-off: legitimately deleting >50% of your chats on another
+    // device won't propagate to this one on the next boot (re-do the delete
+    // and it will). Preserving data beats silently dropping it.
+    let localSize = 0;
+    try { localSize = redactedSyncJson().length; } catch (_) {}
+    if (localSize > 0 && serverSize < localSize * 0.5) {
+      console.warn('[sync] Server is newer but much smaller (' + serverSize +
+                   ' vs local ' + localSize + ') — keeping local, re-publishing.');
+      stateSync.lastKnownMtime = serverMtime;
+      persistSyncMeta();
+      scheduleStateSync(redactedSyncJson());
+      stateSync.status = 'ok';
+      updateSyncIndicator();
+    } else {
+      showRestorePrompt(info);
+    }
   } else {
     // Local matches or is ahead. Mark as ok.
     stateSync.lastKnownMtime = Math.max(stateSync.lastKnownMtime, serverMtime);
