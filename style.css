@@ -696,30 +696,45 @@ body::after {
 .msg-action-btn.btn-delete:hover { background: var(--red-neon); color: var(--white); box-shadow: var(--glow-red); }
 
 /* ── Reroll-variant navigator (inline, next to message actions) ──
-   Shown on any assistant message with >1 stored variant. Visually
-   distinct from .branch-nav-btn (which is magenta and lives in the
-   thread header) — variants are cyan so they read as a different
-   axis of navigation: branches jump between threads, variants flip
-   regenerations within the same message. */
+   Shown on any message with >1 stored variant — user messages (edit
+   history) AND assistant messages (reroll history). Both render via
+   the same .variant-nav markup so they look identical; only the
+   tooltip copy differs. Visually distinct from .branch-nav-btn
+   (magenta, in the thread header) — variants are cyan so they read
+   as a different axis of navigation: branches jump between threads,
+   variants flip between regenerations or edits within one message.
+
+   Designed as a single segmented control rather than three loose
+   buttons: the wrapper carries the border + background, inner
+   buttons are transparent, the centre label provides dividers via
+   border-left/right. align-items: stretch lets the wrapper inherit
+   the natural height of its row-mates (.msg-action-btn) so it
+   never reads as shorter or taller than the buttons beside it. */
 .variant-nav {
   display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  align-items: stretch;          /* children fill the wrapper top-to-bottom; dividers reach the edges */
+  gap: 0;                         /* dividers come from label borders, not from flex gap */
   margin: 0 2px;
-  padding: 0 2px;
   vertical-align: middle;
+  border: 1px solid var(--cyan-dim, rgba(0,240,255,0.4));
+  border-radius: var(--radius);
+  background: rgba(0, 240, 255, 0.05);
+  overflow: hidden;               /* clip inner button corners to the wrapper's rounded outline */
 }
 .variant-nav-btn {
-  background: rgba(0, 240, 255, 0.08);
-  border: 1px solid var(--cyan-dim, rgba(0,240,255,0.4));
-  border-radius: 3px;
+  background: transparent;        /* wrapper supplies the background */
+  border: none;                   /* wrapper supplies the border; label supplies dividers */
+  border-radius: 0;
   color: var(--cyan-bright);
   font-family: var(--font);
   font-size: 11px;
   font-weight: 700;
   cursor: pointer;
-  padding: 2px 7px;
+  padding: 0 9px;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: all var(--transition);
 }
 .variant-nav-btn:hover:not(:disabled) {
@@ -736,11 +751,16 @@ body::after {
   color: var(--cyan-bright);
   font-weight: 700;
   letter-spacing: 0.4px;
-  padding: 0 3px;
+  padding: 0 7px;
   text-shadow: 0 0 4px rgba(0,240,255,0.35);
   white-space: nowrap;
   min-width: 28px;
   text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-left: 1px solid var(--cyan-dim, rgba(0,240,255,0.3));
+  border-right: 1px solid var(--cyan-dim, rgba(0,240,255,0.3));
 }
 
 /* Changed amber reference for btn-edit to cyan/white */
@@ -1889,47 +1909,27 @@ input[type="color"].color-swatch::-moz-color-swatch { border: none; border-radiu
     min-height: 32px;
   }
 
-  /* ── Reroll variant nav: size-match the action buttons ───────────
-     On desktop these can stay compact because they live in a hover-
-     revealed corner badge. On mobile the row is always-visible and
-     thumb-targeted, so the ◀ N/M ▶ trio needs the same vertical
-     mass as Edit/Copy/Del/Reroll — otherwise it reads as broken
-     children sitting between full-sized siblings. The .variant-nav
-     wrapper keeps its own border so it still reads as a single
-     navigation unit rather than three loose buttons. */
+  /* ── Reroll variant nav: scale up to match touch-sized action buttons.
+     The segmented look (wrapper border, inner dividers, stretched
+     children) lives in the base .variant-nav rules so desktop and
+     mobile share one design. Here we only override dimensions for
+     touch: min-height bumps to 36px so the wrapper aligns with
+     .msg-action-btn — which the pointer:coarse block (further down)
+     pushes to min-height: 36px on every touch device. The previous
+     32px left the variant-nav reading short next to its row-mates
+     on every phone. Arrow glyphs also grow a bit for thumb use. */
   .variant-nav {
-    gap: 0;                  /* was 2px — gaps showed the container background through the bordered widget */
-    padding: 0;
-    margin: 0;
-    min-height: 32px;
-    border: 1px solid var(--cyan-dim, rgba(0,240,255,0.4));
-    border-radius: var(--radius);
-    background: rgba(0, 240, 255, 0.05);
-    overflow: hidden;        /* keeps the inner buttons' square corners flush against the wrapper */
-    align-items: stretch;    /* children fill the full wrapper height so dividers reach top/bottom */
+    min-height: 36px;
   }
   .variant-nav-btn {
-    background: transparent;
-    border: none;
     min-width: 36px;
-    min-height: 32px;
     padding: 0 10px;
-    font-size: 13px;         /* arrow glyphs need to be readable */
-    border-radius: 0;
-    display: inline-flex;    /* center arrow glyph now that button stretches to fill height */
-    align-items: center;
-    justify-content: center;
+    font-size: 13px;         /* arrow glyphs need to be readable at thumb distance */
   }
   .variant-nav-label {
     font-size: 12px;
     padding: 0 8px;
     min-width: 36px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-left: 1px solid var(--cyan-dim, rgba(0,240,255,0.3));
-    border-right: 1px solid var(--cyan-dim, rgba(0,240,255,0.3));
-    align-self: stretch;     /* fill the wrapper height so the dividers reach top/bottom */
   }
 
   /* --- Welcome screen --- */
@@ -2402,6 +2402,22 @@ input[type="color"].color-swatch::-moz-color-swatch { border: none; border-radiu
   .btn { min-height: 44px; }
   .msg-action-btn { min-height: 36px; padding: 6px 12px; }
   .toggle-sidebar { padding: 6px 12px; }
+}
+
+/* ── Narrow-phone padding override that actually wins ─────────────
+   The @media (max-width: 400px) block above sets .msg-action-btn
+   padding to 6px 9px so a typical action row (Edit, Copy, Del,
+   [1/3], Reroll) stays on one line. But the @media (pointer: coarse)
+   block right above this re-asserts 6px 12px, and source order
+   makes pointer:coarse win on the very devices the narrow-phone
+   rule was written for — phones are both narrow AND touch. The
+   result was a row that wrapped, dropping the Reroll button to a
+   second line on its own and making the whole strip look broken.
+   Re-declaring the tightening here, with both conditions combined
+   and placed after pointer:coarse, wins the cascade without
+   needing !important. */
+@media (max-width: 400px) and (pointer: coarse) {
+  .msg-action-btn { padding: 6px 9px; }
 }
 /* ========================================================
    THREAD SEARCH BAR
