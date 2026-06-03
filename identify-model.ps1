@@ -99,7 +99,11 @@ $HashDerivations = @{
     'ac7498a36a719da630e99d48e6ebc4409de85a77556c2b6159eeb735bcbd11df' = @{ family='tulu'; id='tulu'; jinja=1; builtin=''; think='none' }
     '54d400beedcd17f464e10063e0577f6f798fa896266a912d8a366f8a2fcc0bca' = @{ family='deepseek'; id='deepseek'; jinja=1; builtin=''; think='none' }
     'b6835114b7303ddd78919a82e4d9f7d8c26ed0d7dfc36beeb12d524f6144eab1' = @{ family='deepseek'; id='deepseek-r1'; jinja=1; builtin=''; think='deepseek' }
-    '854b703e44ca06bdb196cc471c728d15dbab61e744fe6cdce980086b61646ed1' = @{ family='glm'; id='glm'; jinja=1; builtin=''; think='none' }
+    # GLM-4-9B-Chat (2024 original, dense, non-thinking). Hash is the
+    # canonical ChatGLM4 embedded template. The chat.html registry key for
+    # this model is 'glm-4-9b', so we emit that id; family stays 'glm' so the
+    # rest of the family (Z1, Air, Flash, MoE) shares the same family bucket.
+    '854b703e44ca06bdb196cc471c728d15dbab61e744fe6cdce980086b61646ed1' = @{ family='glm'; id='glm-4-9b'; jinja=1; builtin=''; think='none' }
     'aab20feb9bc6881f941ea649356130ffbc4943b3c2577c0991e1fba90de5a0fc' = @{ family='moonshot'; id='moonshot'; jinja=1; builtin=''; think='none' }
     '70da0d2348e40aaf8dad05f04a316835fd10547bd7e3392ce337e4c79ba91c01' = @{ family='gpt-oss'; id='gpt-oss'; jinja=1; builtin=''; think='harmony' }
     'a4c9919cbbd4acdd51ccffe22da049264b1b73e59055fa58811a99efbd7c8146' = @{ family='gpt-oss'; id='gpt-oss'; jinja=1; builtin=''; think='harmony' }
@@ -194,6 +198,26 @@ function Get-ModelInfo {
         $rec.useJinja = 1
         if ($sidecarFile -match 'mistral') { $rec.family = 'mistral'; $rec.id = 'mistral' }
         elseif ($sidecarFile -match 'granite') { $rec.family = 'granite'; $rec.id = 'granite' }
+        # GLM sidecar: community guides for GLM-4.5+/4.6V-Flash/Air specifically
+        # tell users to download the corrected Jinja from the unsloth (or other
+        # uploader) repo and drop it next to the GGUF, because the embedded
+        # template has known issues parsing reasoning content during tool calls.
+        # We don't bundle a sidecar ourselves; we just recognise one if the user
+        # provided it. Variant id (z1/flash/air/...) is picked from the GGUF
+        # filename here -- the sidecar block early-returns at line ~299, so the
+        # main GLM dispatch branch below never sees this file and we must
+        # disambiguate now. Kept in sync with that branch's filename rules.
+        elseif ($sidecarFile -match 'glm|chatglm') {
+            $rec.family = 'glm'
+            $lname = (Split-Path $Path -Leaf).ToLower()
+            if     ($lname -match 'flash')                                  { $rec.id = 'glm-flash';    $rec.thinkingFormat = 'deepseek' }
+            elseif ($lname -match 'air')                                    { $rec.id = 'glm-air';      $rec.thinkingFormat = 'deepseek' }
+            elseif ($lname -match 'z1[\-_.]?32|z1.+32b')                    { $rec.id = 'glm-z1-32b';   $rec.thinkingFormat = 'deepseek' }
+            elseif ($lname -match 'z1')                                     { $rec.id = 'glm-z1-9b';    $rec.thinkingFormat = 'deepseek' }
+            elseif ($lname -match 'glm[\-_.]?4[\-_.]?32b|glm4[\-_.]?32b')   { $rec.id = 'glm-4-32b';    $rec.thinkingFormat = 'none' }
+            elseif ($lname -match 'glm[\-_.]?(?:4\.[5-9]|5(?:\.\d+)?)')     { $rec.id = 'glm-big-moe';  $rec.thinkingFormat = 'deepseek' }
+            else                                                            { $rec.id = 'glm-4-9b';     $rec.thinkingFormat = 'none' }
+        }
     }
 
     $meta = Read-GgufMeta -Path $Path
@@ -319,12 +343,82 @@ function Get-ModelInfo {
         } else {
             $rec.id = 'command-r-35b'
         }
-    } elseif ($t.Contains('<|im_user|>') -and $t.Contains('<|im_middle|>')) {
+    } elseif ($t.Contains('[gMASK]') -or $t.Contains('<sop>') -or
+              $arch.StartsWith('glm') -or $arch -eq 'chatglm') {
+        # GLM family (Z.ai / Zhipu / THUDM). Two template eras coexist:
+        #
+        #   1. 2024-era GLM-4-9B-Chat (arch 'chatglm' or 'glm4', no [gMASK]):
+        #      embedded template is the one llama.cpp ships as built-in
+        #      'chatglm4'. We disable --jinja and use the built-in to avoid
+        #      any minja surprises with that older embedded template.
+        #
+        #   2. 0414-era and 4.5+ era ([gMASK]<sop>..<|user|>..<|assistant|>..):
+        #      no built-in name in llama.cpp's table covers this format, so
+        #      we keep --jinja and rely on the embedded template. The 4.5+
+        #      embedded template has known issues parsing reasoning content
+        #      during tool calls; the documented community workaround is to
+        #      drop a corrected .jinja next to the GGUF (sidecar block above
+        #      picks that up automatically and wins over this branch).
+        #
+        # Variant disambiguation is filename-driven so we can target the
+        # right chat.html registry entry (display name + ctx hint + VRAM
+        # advisory). Architecture alone is too coarse: the Flash 9B, Z1 9B,
+        # 4-32B, Air 106B and the big MoE flagships can all share an arch
+        # string ('glm4' for dense, 'glm4moe' for MoE).
+        $rec.family = 'glm'; $rec.useJinja = 1; $rec.chatTemplate = ''
+
+        if ($name -match 'flash') {
+            # GLM-4.5V-Flash / 4.6V-Flash — 9B dense, vision-capable but text
+            # mode works fine without mmproj. Emits <think>. CAUTION: Vulkan
+            # backend has a known incoherence bug with this model (llama.cpp
+            # issue #18164); CUDA/CPU paths are fine.
+            $rec.id = 'glm-flash'; $rec.thinkingFormat = 'deepseek'
+        }
+        elseif ($name -match 'air') {
+            # GLM-4.5-Air / 4.6-Air — 106B/12B MoE, workstation+ only.
+            # Needs --n-cpu-moe MoE-on-CPU offload to fit on a single GPU.
+            $rec.id = 'glm-air'; $rec.thinkingFormat = 'deepseek'
+        }
+        elseif ($name -match 'z1[\-_.]?32|z1.+32b') {
+            # GLM-Z1-32B-0414 reasoning (also covers Rumination-32B).
+            $rec.id = 'glm-z1-32b'; $rec.thinkingFormat = 'deepseek'
+        }
+        elseif ($name -match 'z1') {
+            # GLM-Z1-9B-0414 reasoning. Sweet spot for 8 GB cards.
+            $rec.id = 'glm-z1-9b'; $rec.thinkingFormat = 'deepseek'
+        }
+        elseif ($name -match 'glm[\-_.]?4[\-_.]?32b|glm4[\-_.]?32b') {
+            # GLM-4-32B-0414 instruct (non-thinking 32B for 24 GB cards).
+            $rec.id = 'glm-4-32b'; $rec.thinkingFormat = 'none'
+        }
+        elseif ($arch -eq 'glm4moe' -or
+                $name -match 'glm[\-_.]?(?:4\.[5-9]|5(?:\.\d+)?)') {
+            # GLM-4.5 / 4.6 / 4.7 flagship and GLM-5 / 5.1 — the big MoE tier
+            # (355B+, 744B+). Workstation territory; we identify it so the
+            # registry can warn the user before they try to load it.
+            $rec.id = 'glm-big-moe'; $rec.thinkingFormat = 'deepseek'
+        }
+        else {
+            # Default: 2024-era GLM-4-9B-Chat (or any dense glm4/chatglm we
+            # don't recognise). The hash dictionary above already short-
+            # circuits the canonical GLM-4-9B-Chat template -- this branch
+            # is reached only for variants whose template hash drifted
+            # (community quantizations that re-embed the template, etc).
+            $rec.id = 'glm-4-9b'
+            $rec.useJinja = 0; $rec.chatTemplate = 'chatglm4'
+        }
+
+        # Final override: if the embedded template literally contains <think>,
+        # force deepseek thinking regardless of filename (covers fine-tunes
+        # whose filenames don't carry 'z1' or 'thinking' but whose template
+        # was patched to inject <think> by the uploader).
+        if ($t.Contains('<think>')) { $rec.thinkingFormat = 'deepseek' }
+    }
+    elseif ($t.Contains('<|im_user|>') -and $t.Contains('<|im_middle|>')) {
         $rec.family = 'moonshot'; $rec.id = 'moonshot'; $rec.useJinja = 1
     } elseif ($t.Contains('<|im_start|>')) {
         $rec.useJinja = 1
         if ($arch.StartsWith('qwen')) { $rec.family = 'qwen'; $rec.id = 'qwen' }
-        elseif ($arch.StartsWith('glm') -or $arch -eq 'chatglm') { $rec.family = 'glm'; $rec.id = 'glm' }
         elseif ($arch.StartsWith('phi')) { $rec.family = 'phi'; $rec.id = 'phi' }
         elseif ($arch -ne '') { $rec.family = $arch; $rec.id = $arch }
         else { $rec.family = 'custom'; $rec.id = 'custom' }

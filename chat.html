@@ -1328,11 +1328,49 @@ const MODEL_REGISTRY = {
     maxCtx: 131072, defaultCtx: 32768, thinkingFormat: 'deepseek',
     hint: 'DeepSeek-R1 8B supports up to 128K tokens. Reasoning-focused — shows chain-of-thought by default.'
   },
-  // ── GLM family (think tags) ─────────────────────────────────────
-  'glm-4-thinking': {
-    name: 'GLM-4 Thinking', family: 'glm',
-    maxCtx: 131072, defaultCtx: 32768, thinkingFormat: 'deepseek',
-    hint: 'Z.ai GLM thinking models emit <think>...</think> blocks. /nothink in chat to skip thinking when supported.'
+  // ── GLM family (Z.ai / Zhipu / THUDM) ───────────────────────────
+  // Two template eras coexist. 2024-era GLM-4-9B uses llama.cpp's built-in
+  // 'chatglm4' template (identify-model.ps1 sets useJinja=0 for it). The
+  // 0414-era and 4.5+ era use [gMASK]<sop> + <|user|>/<|assistant|> markers
+  // -- llama.cpp has no built-in name for that, so they run with --jinja
+  // against the embedded template. The embedded 4.5+ template has known
+  // issues with reasoning parsing during tool calls; community workaround
+  // is to drop a corrected .jinja next to the GGUF (the launcher picks it
+  // up automatically via the sidecar mechanism -- no per-user setup here).
+  'glm-4-9b': {
+    name: 'GLM-4-9B-Chat', family: 'glm',
+    maxCtx: 131072, defaultCtx: 16384, thinkingFormat: 'none',
+    hint: 'Z.ai GLM-4-9B-Chat (2024 original, dense). Non-thinking instruct model, fits 8 GB VRAM at Q4_K_M. Launcher uses llama.cpp built-in chatglm4 template (--jinja off) for this one.'
+  },
+  'glm-z1-9b': {
+    name: 'GLM-Z1-9B (0414)', family: 'glm',
+    maxCtx: 32768, defaultCtx: 16384, thinkingFormat: 'deepseek',
+    hint: 'Z.ai GLM-Z1-9B-0414 reasoning model (April 2025). Emits <think>...</think>. Sweet spot for 8-12 GB cards. Native 32K context; YaRN extends further if needed.'
+  },
+  'glm-z1-32b': {
+    name: 'GLM-Z1-32B (0414)', family: 'glm',
+    maxCtx: 32768, defaultCtx: 16384, thinkingFormat: 'deepseek',
+    hint: 'Z.ai GLM-Z1-32B-0414 reasoning (also covers Rumination-32B). Needs 24 GB VRAM at Q4_K_M with modest context. Emits <think>...</think>.'
+  },
+  'glm-4-32b': {
+    name: 'GLM-4-32B (0414)', family: 'glm',
+    maxCtx: 32768, defaultCtx: 16384, thinkingFormat: 'none',
+    hint: 'Z.ai GLM-4-32B-0414 instruct (non-thinking). ~19 GB at Q4_K_M; comfortable on 24 GB cards with 16-32K context.'
+  },
+  'glm-flash': {
+    name: 'GLM-V-Flash 9B', family: 'glm',
+    maxCtx: 131072, defaultCtx: 16384, thinkingFormat: 'deepseek',
+    hint: 'Z.ai GLM-4.6V-Flash / 4.5V-Flash (9B dense, vision-capable). Text mode works without mmproj. Q4_K_M ~6 GB, Q8_0 ~10 GB. NOTE: Vulkan backend has a known incoherence bug with this model (llama.cpp #18164) -- use CUDA or CPU.'
+  },
+  'glm-air': {
+    name: 'GLM-4.5/4.6 Air (106B MoE)', family: 'glm',
+    maxCtx: 131072, defaultCtx: 16384, thinkingFormat: 'deepseek',
+    hint: 'Z.ai GLM-4.5-Air / 4.6-Air -- 106B total / 12B active MoE. Workstation tier: Q4_K_M is ~63 GB, Q2_K is 45 GB. Needs VRAM+RAM combined or --n-cpu-moe MoE offload. If the embedded template misbehaves on tool calls, drop a corrected .jinja next to the GGUF (see the unsloth or zai-org repo for one).'
+  },
+  'glm-big-moe': {
+    name: 'GLM-4.5 / 4.6 / 4.7 / 5 (big MoE)', family: 'glm',
+    maxCtx: 200000, defaultCtx: 16384, thinkingFormat: 'deepseek',
+    hint: 'Z.ai flagship MoE (GLM-4.5: 355B/32B, GLM-5: 744B/40B). Multi-GPU or heavy offload territory -- single-card hobbyists should use Air, Flash, or Z1 instead. Listed so the launcher recognises the GGUF if you have one.'
   },
   // ── OpenAI gpt-oss (Harmony channels) ───────────────────────────
   'gpt-oss-20b': {
@@ -1463,9 +1501,45 @@ function identifyModelFromFilename(filename) {
   if (/qwen.?3/.test(f))          return { id: 'qwen3',    family: 'qwen',     thinkingFormat: 'deepseek' };
   if (/qwen/.test(f))             return { id: 'qwen',     family: 'qwen',     thinkingFormat: 'deepseek' };
 
-  // GLM (Z.ai / ChatGLM) — <think> tags in thinking variants
-  if (/glm.?4|chatglm|glm[\-_.]?(?:thinking|reasoning)/.test(f))
-                                  return { id: 'glm',      family: 'glm',      thinkingFormat: 'deepseek' };
+  // GLM family (Z.ai / Zhipu / THUDM) -- mirrors the dispatch in
+  // identify-model.ps1, kept in sync so MODEL_REGISTRY lookups succeed
+  // (ps1 emits id, chat.html displays it). Order: most specific first.
+  //
+  // Coverage:
+  //   glm-flash   - GLM-4.5V-Flash / 4.6V-Flash (9B dense, thinking, vision)
+  //   glm-air     - GLM-4.5-Air / 4.6-Air (106B MoE, workstation+)
+  //   glm-z1-32b  - GLM-Z1-32B-0414 / Rumination-32B (reasoning, 24 GB)
+  //   glm-z1-9b   - GLM-Z1-9B-0414 (reasoning, 8 GB sweet spot)
+  //   glm-4-32b   - GLM-4-32B-0414 instruct (non-thinking, 24 GB)
+  //   glm-big-moe - GLM-4.5/4.6/4.7/5/5.1 flagship MoE (multi-GPU)
+  //   glm-4-9b    - GLM-4-9B-Chat 2024 original (non-thinking, 8 GB)
+  if (/glm[\-_.]?\d(?:\.\d)?v[\-_.]?flash|glm[\-_.]?v[\-_.]?flash|glm[\-_.]?flash/.test(f))
+                                  return { id: 'glm-flash',   family: 'glm',   thinkingFormat: 'deepseek' };
+  if (/glm[\-_.]?\d(?:\.\d)?[\-_.]?air|glm[\-_.]?air/.test(f))
+                                  return { id: 'glm-air',     family: 'glm',   thinkingFormat: 'deepseek' };
+  if (/glm[\-_.]?z1[\-_.]?32|z1.+32b/.test(f))
+                                  return { id: 'glm-z1-32b',  family: 'glm',   thinkingFormat: 'deepseek' };
+  if (/glm[\-_.]?z1|z1[\-_.]?9b/.test(f))
+                                  return { id: 'glm-z1-9b',   family: 'glm',   thinkingFormat: 'deepseek' };
+  if (/glm[\-_.]?4[\-_.]?32b/.test(f))
+                                  return { id: 'glm-4-32b',   family: 'glm',   thinkingFormat: 'none' };
+  if (/glm[\-_.]?(?:4\.[5-9]|5(?:\.\d+)?)/.test(f))
+                                  return { id: 'glm-big-moe', family: 'glm',   thinkingFormat: 'deepseek' };
+  // Original GLM-4-9B-Chat and any generic glm-4 / chatglm fallthrough.
+  // The /chatglm/ alternative catches THUDM's older naming; the explicit
+  // /glm[\-_.]?4[\-_.]?9b/ matches the canonical filename; and the bare
+  // /^glm[\-_.]?4(?![\.0-9])/ catches glm-4-base / glm-4-instruct etc.
+  // without grabbing glm-4.5 (already handled above by the big-MoE rule).
+  if (/glm[\-_.]?4[\-_.]?9b|chatglm|^glm[\-_.]?4(?![\.0-9])/.test(f))
+                                  return { id: 'glm-4-9b',    family: 'glm',   thinkingFormat: 'none' };
+  // Generic "glm + thinking/reasoning anywhere in filename" finetune.
+  // Filename starts with glm and mentions think/reason -> treat as Z1.
+  // The ps1 dispatch has the embedded template available and can confirm
+  // <think> directly; we don't, so filename signal is best-effort here.
+  if (/^glm.*(?:think|reason)/.test(f))
+                                  return { id: 'glm-z1-9b',   family: 'glm',   thinkingFormat: 'deepseek' };
+  // Anything else starting with glm: best guess is the 9B instruct line.
+  if (/^glm[\-_.]/.test(f))       return { id: 'glm-4-9b',    family: 'glm',   thinkingFormat: 'none' };
 
   // IBM Granite — <think> in thinking variants
   if (/granite/.test(f))          return { id: 'granite',  family: 'granite',
