@@ -203,6 +203,9 @@ The model file is probably in the wrong place. Make sure every `.gguf` file is i
 **Switching models gave me a `502` error.**
 Open **Task Manager** (press Ctrl + Shift + Esc), find anything labeled **"Windows PowerShell,"** and end those tasks. Then run `launch.bat` again. This clears out a stuck background process.
 
+**I was mid session and everything broke!**
+The LAN access for mobile access has changed on the variable address. There is a more stable address listed right above it. 
+
 ---
 ## Known bugs
 We like to be upfront about what's broken. These two are confirmed, and we're working to fix them ASAP. We'll update this section as we squash them.
