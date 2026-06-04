@@ -4117,6 +4117,32 @@ async function buildContextMessages(thread, card) {
   const RECENT_RESERVE_FACTOR = 0.22;
   const recentReserve = Math.floor(budget * RECENT_RESERVE_FACTOR);
 
+  // Response reserve: how much of the budget we hold back as guaranteed
+  // room for the model's REPLY. Without this, compression only fires
+  // when the INPUT crosses 90% of CTX — leaving as little as one short
+  // user message's worth of room for the response. On turns where the
+  // user just said "ok" or "go on", the AI started generating with ~10%
+  // of CTX (or less) for output and a long reply got truncated mid-token
+  // because the tiny user message didn't push the input over the line.
+  //
+  // The fix is to make the compression trigger output-aware: fire when
+  // there isn't enough room left for a meaningful reply, not just when
+  // the input has overflowed. Expressed as a fraction of budget so it
+  // scales with context size:
+  //   at 16K CTX  → ~2.9K output tokens reserved at trigger
+  //   at 32K CTX  → ~5.9K
+  //   at 100K CTX → ~18K
+  //
+  // Combined with the existing 10%-of-CTX physical margin (budget vs
+  // tokenLimit), the AI is guaranteed ~30% of CTX worth of output room
+  // at the moment compression fires, and substantially more right after
+  // compression lands at TARGET_FACTOR. NOTE: the hard trim safety net
+  // further down still keys off `budget` (the real physical ceiling) —
+  // this reserve is a softer trigger, not a new physical limit.
+  const RESPONSE_RESERVE_FACTOR = 0.20;
+  const responseReserve = Math.floor(budget * RESPONSE_RESERVE_FACTOR);
+  const effectiveBudget = budget - responseReserve;
+
   // Fixed overhead
   const systemTokens = estimateTokens(card.writingStyle) + 4;
   let usedTokens = systemTokens;
@@ -4167,8 +4193,11 @@ async function buildContextMessages(thread, card) {
   const liveTokens = liveCosts.reduce((a, b) => a + b, 0);
   const projected  = usedTokens + liveTokens;
 
-  // Trigger: would sending right now exceed the budget?
-  const shouldSummarize = card.loreEnabled && projected > budget && liveMsgs.length > 1;
+  // Trigger: would sending right now leave too little room for the
+  // model's reply? `effectiveBudget` = `budget` minus the response
+  // reserve, so we fire earlier than the raw input ceiling and the AI
+  // always has at least responseReserve worth of output headroom.
+  const shouldSummarize = card.loreEnabled && projected > effectiveBudget && liveMsgs.length > 1;
 
   if (shouldSummarize) {
     // How many tokens do we want to free? Aim to land at TARGET_FACTOR
@@ -6563,17 +6592,23 @@ function updateContextInfo() {
 
   const projected = systemTokens + liveTokens + reminderTokens + loreTokens;
   const budget    = Math.floor(state.settings.tokenLimit * 0.9);
-  const pct       = budget > 0 ? Math.round((projected / budget) * 100) : 0;
+  // Mirror RESPONSE_RESERVE_FACTOR from buildContextMessages — keep these
+  // in sync. Showing % against `effectiveBudget` makes the readout track
+  // the actual compression trigger; otherwise users see compression fire
+  // at ~80% and wonder why.
+  const effectiveBudget = budget - Math.floor(budget * 0.20);
+  const pct       = effectiveBudget > 0 ? Math.round((projected / effectiveBudget) * 100) : 0;
 
   const nextReminder = freq > 0 ? (freq - (userCount % freq)) : '--';
 
-  // Format: "~projected / budget tok (pct%)" so it's immediately visible
-  // how close we are to triggering compression. Add a ⚠ marker when
-  // we're inside 10% of the line.
-  const warn = projected > budget ? ' ⚠ over' : (pct >= 90 ? ' ⚠' : '');
+  // Format: "~projected / effectiveBudget tok (pct%)" so the percentage
+  // shows how close we are to triggering compression. Add a ⚠ marker
+  // when we're inside 10% of the line, and "⚠ over" once we've crossed
+  // it (which means compression will fire on the next turn).
+  const warn = projected > effectiveBudget ? ' ⚠ over' : (pct >= 90 ? ' ⚠' : '');
   let info = archivedCount > 0
-    ? `msgs: ${liveMsgs.length}/${total} | ~${projected}/${budget} tok (${pct}%)${warn}`
-    : `msgs: ${total} | ~${projected}/${budget} tok (${pct}%)${warn}`;
+    ? `msgs: ${liveMsgs.length}/${total} | ~${projected}/${effectiveBudget} tok (${pct}%)${warn}`
+    : `msgs: ${total} | ~${projected}/${effectiveBudget} tok (${pct}%)${warn}`;
   if (loreTokens > 0) info += ` | lore: ~${loreTokens - 4}`;
   info += ` | reminder: ${nextReminder}`;
   el.textContent = info;
