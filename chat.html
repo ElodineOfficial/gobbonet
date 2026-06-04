@@ -2611,6 +2611,16 @@ let state = {
 let isGenerating = false;
 let abortController = null;
 let serverConnected = false;
+// Smart auto-scroll: tracks whether the user is currently pinned at the
+// bottom of the messages container. Streaming-tick scroll calls check
+// this before auto-scrolling — if the user scrolled up to read history,
+// we leave them alone until they scroll back down. Set by the scroll
+// listener attached in attachScrollPinTracking(); only the user can
+// "unpin" by scrolling away, since our own auto-scrolls end at the
+// bottom and the resulting scroll event just re-confirms pinned=true.
+// Starts true so the very first stream auto-follows before any user
+// scroll has happened.
+let scrollPinnedToBottom = true;
 // When lore compression fires during a turn, this holds {count: N, threadId}
 // until the next user input. Read by renderMessages to inject a persistent
 // banner just above the streaming assistant message, so the user sees BOTH
@@ -6670,6 +6680,62 @@ function scrollToBottom() {
   }));
 }
 
+/* ================================================================
+   SMART AUTO-SCROLL
+   scrollToBottom() above is the FORCE variant — always scrolls,
+   used by user-initiated actions (send, switch thread, reroll,
+   edit-save, etc.). The helpers below are the AUTO variants used
+   by streaming-tick calls: they only scroll if the user is still
+   pinned at the bottom. If the user scrolled up to read history,
+   they stay put and chunks pass underneath until they scroll back
+   down — no button, no opt-in, just respect the user's position.
+================================================================ */
+
+/** Attach the page-level scroll listener that maintains scrollPinnedToBottom.
+ *  Idempotent: the messages container survives across renders (we only
+ *  innerHTML it), so a dataset flag prevents duplicate listener attaches. */
+function attachScrollPinTracking() {
+  const container = document.getElementById('messages');
+  if (!container || container.dataset.pinTrackingAttached === '1') return;
+  container.dataset.pinTrackingAttached = '1';
+  container.addEventListener('scroll', () => {
+    // Distance from the bottom in pixels. 32px threshold mirrors the
+    // existing image-load re-anchoring logic in scrollToBottom — about
+    // one message row of slack, enough to absorb sub-pixel rounding and
+    // small layout shifts without flipping the pin spuriously.
+    const dist = container.scrollHeight - container.scrollTop - container.clientHeight;
+    scrollPinnedToBottom = dist < 32;
+  }, { passive: true });
+}
+
+/** Streaming-tick page scroll. No-ops if the user has scrolled up.
+ *  scrollToBottom() itself still does the work when we are pinned —
+ *  this is just a guarded delegate. */
+function autoScrollToBottom() {
+  if (!scrollPinnedToBottom) return;
+  scrollToBottom();
+}
+
+/** Streaming-tick COT inner-scroll. Same pin-respect pattern, but the
+ *  cot-content element is recreated on state transitions (cot-active →
+ *  collapsed → next message's fresh cot-active), so pin state lives on
+ *  the element itself via dataset. A fresh attach each appearance is
+ *  exactly what we want — the user hasn't had a chance to scroll yet. */
+function autoScrollCotContent(cotContent) {
+  if (!cotContent) return;
+  if (cotContent.dataset.pinTrackingAttached !== '1') {
+    cotContent.dataset.pinTrackingAttached = '1';
+    cotContent.dataset.userPinned = '1';
+    cotContent.addEventListener('scroll', () => {
+      const dist = cotContent.scrollHeight - cotContent.scrollTop - cotContent.clientHeight;
+      cotContent.dataset.userPinned = dist < 32 ? '1' : '0';
+    }, { passive: true });
+  }
+  if (cotContent.dataset.userPinned === '1') {
+    cotContent.scrollTop = cotContent.scrollHeight;
+  }
+}
+
 function goHome() {
   state.activeThreadId = null;
   saveState();
@@ -6762,11 +6828,17 @@ function renderStreamingUpdate(assistantMsg) {
 
   if (cotJustAppeared || contentJustStarted) {
     renderMessages();
-    // After full re-render, seed the COT scroll position
+    // After full re-render, seed the COT scroll position. This is a
+    // one-time init right after the cot-content element is created,
+    // before the user has had a chance to interact with it — fine to
+    // force-seed regardless of pin state.
     const freshCot = container.querySelector('.cot-block.cot-active .cot-content');
     if (freshCot) freshCot.scrollTop = freshCot.scrollHeight;
-    // Scroll page to bottom when content first appears
-    if (contentJustStarted) scrollToBottom();
+    // Scroll page to bottom when content first appears — but only if
+    // the user is still pinned. If they scrolled up to read history
+    // during reasoning, the COT-to-content transition shouldn't yank
+    // them out of where they're reading.
+    if (contentJustStarted) autoScrollToBottom();
     return;
   }
 
@@ -6780,7 +6852,10 @@ function renderStreamingUpdate(assistantMsg) {
     const cotContent = lastMsg && lastMsg.querySelector('.cot-content');
     if (cotContent) {
       cotContent.innerHTML = parseMarkdown(assistantMsg.reasoning, aiDialogColor);
-      cotContent.scrollTop = cotContent.scrollHeight;
+      // Auto-pin to the latest reasoning, but only if the user hasn't
+      // scrolled up within the COT box itself. The cot-content element
+      // has its own pin state tracked on its dataset.
+      autoScrollCotContent(cotContent);
     }
   }
 
@@ -6794,8 +6869,9 @@ function renderStreamingUpdate(assistantMsg) {
       contentEl.innerHTML = parseMarkdown(liveText, aiDialogColor);
       if (aiTextColor) contentEl.style.color = aiTextColor;
     }
-    // Scroll page while content is streaming
-    scrollToBottom();
+    // Auto-scroll page while content is streaming — no-ops if the
+    // user scrolled up to read earlier in the conversation.
+    autoScrollToBottom();
   }
 }
 
@@ -9442,6 +9518,7 @@ fetch('default-characters.json')
   })
   .catch(() => render()); // file:// or missing file — just render anyway
 scrollToBottom();
+attachScrollPinTracking();
 applyActiveCardBackground();
 updateSchedCount();
 checkConnection().then(() => {
