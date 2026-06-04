@@ -4352,18 +4352,39 @@ async function buildContextMessages(thread, card) {
 ================================================================ */
 
 /**
- * Create a fork (branch) of the current thread at messageIndex.
- * The new thread shares messages[0..messageIndex-1] with the source,
- * then diverges. If defaultInput is provided the message input is
- * pre-filled so the user can modify it before sending.
+ * Create a fork (branch) of the current thread at messageIndex. The new
+ * thread carries a `forkSource: { threadId, at }` where `at` is the
+ * index of the FIRST DIVERGENT message in the source thread. Two shapes:
+ *
+ *   USER msg → share everything BEFORE this message; pre-fill the input
+ *              with this message's text so the user can tweak the
+ *              wording and resend (the fork starts by re-running this
+ *              turn, possibly differently).
+ *   AI msg   → share everything UP TO AND INCLUDING this reply; leave
+ *              the input empty so the user picks up from after the AI's
+ *              turn (the fork starts by adding the next user message,
+ *              with this AI reply preserved as the new thread's tail).
+ *
+ * Both shapes deposit at the same `at` for adjacent messages — an
+ * AI-msg fork at index N and a user-msg fork at index N+1 share the
+ * same branch point and show up as siblings in the navigator. That's
+ * correct: they describe the same divergence in the conversation.
  */
 function forkAt(messageIndex) {
   const thread = getActiveThread();
   if (!thread) return;
 
-  // Grab the content of the message at this index to pre-fill the input
   const sourceMsg = thread.messages[messageIndex];
-  const defaultInput = sourceMsg ? (sourceMsg.content || '') : '';
+  const isAiBranch = !!(sourceMsg && sourceMsg.role === 'assistant');
+
+  // `cutoff` is the index where the new thread diverges from the source
+  // (i.e. the first message NOT included in the shared history). For an
+  // AI branch we include `messageIndex` itself, so cutoff = messageIndex + 1.
+  const cutoff = isAiBranch ? messageIndex + 1 : messageIndex;
+
+  // Pre-fill input only when re-running a user turn. For AI branches the
+  // input stays empty — the user is continuing forward, not re-asking.
+  const defaultInput = isAiBranch ? '' : (sourceMsg ? (sourceMsg.content || '') : '');
 
   // Deep-copy shared history. The spread on `m` handles primitives,
   // but msg.variants (added by the reroll feature) is an array of
@@ -4371,7 +4392,7 @@ function forkAt(messageIndex) {
   // the fork would leak back into the source thread. Clone defensively
   // even on messages that don't currently have variants, since they
   // might gain them later via reroll in either thread.
-  const sharedMessages = thread.messages.slice(0, messageIndex).map(m => {
+  const sharedMessages = thread.messages.slice(0, cutoff).map(m => {
     const copy = { ...m };
     if (Array.isArray(m.variants)) {
       copy.variants = m.variants.map(v => ({ ...v }));
@@ -4381,7 +4402,7 @@ function forkAt(messageIndex) {
 
   const baseName = thread.name.replace(/^⑂\s*/, '').slice(0, 38);
   const forks = getAllForksOf(thread.id);
-  const branchNum = forks.filter(t => t.forkSource && t.forkSource.at === messageIndex).length + 1;
+  const branchNum = forks.filter(t => t.forkSource && t.forkSource.at === cutoff).length + 1;
 
   const newThread = {
     id: generateId(),
@@ -4392,7 +4413,7 @@ function forkAt(messageIndex) {
     pinned: false,
     folderId: thread.folderId,
     tags: [...(thread.tags || [])],
-    forkSource: { threadId: thread.id, at: messageIndex }
+    forkSource: { threadId: thread.id, at: cutoff }
   };
 
   state.threads.unshift(newThread);
@@ -6347,6 +6368,7 @@ function renderMessages() {
         }
       } else {
         actionsHtml = `
+          <button class="msg-action-btn btn-branch" onclick="forkAt(${i})" title="Branch from this reply — start a new thread that keeps this reply as its last AI turn, then pick up fresh">⑂ Branch</button>
           <button class="msg-action-btn btn-edit" onclick="editMessage(${i})" title="Edit">Edit</button>
           <button class="msg-action-btn" onclick="copyMessage(${i})" title="Copy">Copy</button>
           <button class="msg-action-btn btn-delete" onclick="deleteMessage(${i})" title="Delete">Del</button>`;
