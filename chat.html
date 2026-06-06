@@ -6190,10 +6190,15 @@ function renderLandingPage() {
       const icon = p.icon || '&#9864;';
       const name = escapeHtml(p.name || 'Unnamed');
       const desc = escapeHtml((p.desc || '').slice(0, 80));
-      // If the preset has full card data, clicking installs it as a new character card
+      // If the preset has full card data, clicking installs it as a new character card.
+      // NOTE: JSON.stringify(JSON.stringify(p)) yields a JS string literal whose outer
+      // chars are " — dropping that raw into onclick="..." closes the attribute on the
+      // first inner quote and the handler silently dies as a syntax error. escapeHtml
+      // turns those " into &quot;, which the browser decodes back to " when reading
+      // the attribute, so the JS parser sees the intended string literal.
       const hasCardData = !!(p.writingStyle || p.personality);
       const clickAttr = hasCardData
-        ? `onclick="installDefaultChar(${JSON.stringify(JSON.stringify(p))})" title="Install as character card"`
+        ? `onclick="installDefaultChar(${escapeHtml(JSON.stringify(JSON.stringify(p)))})" title="Install as character card"`
         : `title="${name}"`;
       return `
         <div class="landing-preset-card ${hasCardData ? 'landing-preset-installable' : ''}" ${clickAttr}>
