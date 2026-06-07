@@ -278,78 +278,168 @@ if /i "!DO_DOWNLOAD!"=="N" (
 
 echo.
 echo  [..] Downloading llama.cpp (Vulkan build for Windows x64)...
-echo      This uses PowerShell to find the latest release.
+echo      About 300 MB. This is the only network step.
+echo.
+echo  ====================================================
+echo   IMPORTANT - If this window CLOSES during the download:
+echo   your antivirus quarantined the install script. Add a
+echo   folder exclusion for this directory and re-run:
+echo     %~dp0
+echo   ...or install manually:
+echo     https://github.com/ggml-org/llama.cpp/releases
+echo     (file ending in: -win-vulkan-x64.zip)
+echo  ====================================================
 echo.
 
-:: Use PowerShell to query GitHub API, find the Vulkan x64 asset, VERIFY its
-:: SHA-256 against the digest GitHub reports, then extract. Written to a temp
-:: .ps1 and run with -File (immune to batch caret/quote/delayed-expansion quirks).
+:: -----------------------------------------------------------------
+:: PowerShell does the API query + checksum (small, low-risk work),
+:: but the byte-pumping is handed off to curl.exe and tar.exe --
+:: Microsoft-signed binaries that ship in System32 since Win10 1803.
+:: Three reasons we don't let PowerShell do the download itself:
+::
+::   1. PS 5.x's Invoke-WebRequest is 50-100x slower than the
+::      browser because of its progress-bar repaint loop (upstream
+::      PowerShell issue #13414). On 300 MB that's the difference
+::      between 90 seconds and 30+ minutes of frozen-looking
+::      window -- users force-close, thinking it died. We also
+::      set $ProgressPreference='SilentlyContinue' so even the
+::      IWR fallback path isn't pathological.
+::
+::   2. IWR buffers the entire response in RAM before flushing to
+::      disk. 300 MB on a 4 GB-RAM laptop running other things
+::      can OOM the PS process. curl streams straight to disk.
+::
+::   3. Some AV behavioral engines flag the "batch writes a .ps1
+::      to TEMP that then fetches an .exe from the internet"
+::      pattern as ransomware staging. curl.exe is signed by
+::      Microsoft and sails through. tar.exe gets the same swap
+::      vs Expand-Archive (same library family, same problems).
+::
+:: We also stash the AV/network failure log next to launch.bat
+:: so post-mortem is possible if the window does still vanish.
+:: -----------------------------------------------------------------
 set "DL_SCRIPT=%TEMP%\gobbonet_dlllama_%RANDOM%.ps1"
 set "GOBBONET_LLAMA_DIR=!LLAMA_DIR!"
 set "GOBBONET_PIN_TAG=!LLAMA_PIN_TAG!"
+set "GOBBONET_LOG_DIR=%~dp0"
 (
 echo $ErrorActionPreference = 'Stop'
+echo $ProgressPreference = 'SilentlyContinue'
+echo $logPath = Join-Path $env:GOBBONET_LOG_DIR 'gobbonet-download.log'
+echo function Log^($msg^) {
+echo     Write-Host $msg
+echo     try { Add-Content -Path $logPath -Value ^("[" + ^(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'^) + "] " + $msg^) -ErrorAction SilentlyContinue } catch {}
+echo }
 echo try {
 echo     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 echo     $tag = $env:GOBBONET_PIN_TAG
 echo     if ^($tag^) {
-echo         Write-Host ^("  [..] Using pinned llama.cpp release: " + $tag^)
+echo         Log ^("  [..] Using pinned llama.cpp release: " + $tag^)
 echo         $rel = Invoke-RestMethod ^("https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/" + $tag^)
 echo     } else {
-echo         Write-Host '  [..] Querying GitHub for latest release...'
+echo         Log '  [..] Querying GitHub for latest release...'
 echo         $rel = Invoke-RestMethod 'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest'
 echo     }
-echo     Write-Host ^("  [OK] Release: " + $rel.tag_name^)
+echo     Log ^("  [OK] Release: " + $rel.tag_name^)
 echo     $asset = $rel.assets ^| Where-Object { $_.name -match 'win.*vulkan.*x64.*\.zip$' } ^| Select-Object -First 1
 echo     if ^(-not $asset^) { $asset = $rel.assets ^| Where-Object { $_.name -match 'vulkan.*x64.*\.zip$' } ^| Select-Object -First 1 }
-echo     if ^(-not $asset^) { Write-Host '  [ERROR] No Vulkan x64 build in release assets.'; $rel.assets ^| ForEach-Object { Write-Host ^("    - " + $_.name^) }; exit 1 }
+echo     if ^(-not $asset^) { Log '  [ERROR] No Vulkan x64 build in release assets.'; $rel.assets ^| ForEach-Object { Log ^("    - " + $_.name^) }; exit 1 }
 echo     $url = $asset.browser_download_url
 echo     $zip = Join-Path $env:TEMP 'llama-cpp-vulkan.zip'
-echo     Write-Host ^("  [..] Downloading: " + $asset.name + " (" + [math]::Round^($asset.size/1MB,1^) + " MB)"^)
-echo     Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
-echo     Write-Host '  [OK] Download complete.'
+echo     $sizeMB = [math]::Round^($asset.size/1MB,1^)
+echo     Log ^("  [..] Downloading: " + $asset.name + " (" + $sizeMB + " MB)"^)
+echo     $curl = Join-Path $env:WINDIR 'System32\curl.exe'
+echo     if ^(Test-Path $curl^) {
+echo         Log '  [..] Using curl.exe -- live progress bar follows'
+echo         ^& $curl --location --fail --progress-bar --output $zip $url
+echo         if ^($LASTEXITCODE -ne 0^) { throw ^("curl.exe exited with code " + $LASTEXITCODE^) }
+echo     } else {
+echo         Log '  [..] curl.exe not present, falling back to Invoke-WebRequest (please be patient -- no progress bar)'
+echo         Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+echo     }
+echo     Log '  [OK] Download complete.'
 echo     $digest = $asset.digest
 echo     if ^(-not $digest^) {
-echo         Write-Host '  [ERROR] GitHub reported no SHA-256 digest for this asset (old release?).'
-echo         Write-Host '          Refusing to run an unverified binary. Pin LLAMA_PIN_TAG to a'
-echo         Write-Host '          recent release that publishes digests, or install manually.'
+echo         Log '  [ERROR] GitHub reported no SHA-256 digest for this asset (old release?).'
+echo         Log '          Refusing to run an unverified binary. Pin LLAMA_PIN_TAG to a'
+echo         Log '          recent release that publishes digests, or install manually.'
 echo         Remove-Item $zip -Force -ErrorAction SilentlyContinue
 echo         exit 1
 echo     }
-echo     $expected = ^($digest -replace '^sha256:','').ToLower^(^)
-echo     Write-Host '  [..] Verifying SHA-256...'
+echo     $expected = ^($digest -replace '^^sha256:',''^).ToLower^(^)
+echo     Log '  [..] Verifying SHA-256...'
 echo     $actual = ^(Get-FileHash -Path $zip -Algorithm SHA256^).Hash.ToLower^(^)
 echo     if ^($actual -ne $expected^) {
-echo         Write-Host '  [ERROR] CHECKSUM MISMATCH -- download is corrupt or tampered.'
-echo         Write-Host ^("          expected: " + $expected^)
-echo         Write-Host ^("          actual:   " + $actual^)
+echo         Log '  [ERROR] CHECKSUM MISMATCH -- download is corrupt or tampered.'
+echo         Log ^("          expected: " + $expected^)
+echo         Log ^("          actual:   " + $actual^)
 echo         Remove-Item $zip -Force -ErrorAction SilentlyContinue
 echo         exit 1
 echo     }
-echo     Write-Host '  [OK] Checksum verified.'
+echo     Log '  [OK] Checksum verified.'
 echo     $dest = $env:GOBBONET_LLAMA_DIR
 echo     if ^(-not ^(Test-Path $dest^)^) { New-Item -ItemType Directory -Path $dest -Force ^| Out-Null }
-echo     Write-Host '  [..] Extracting...'
-echo     Expand-Archive -Path $zip -DestinationPath $dest -Force
+echo     Log '  [..] Extracting...'
+echo     $tar = Join-Path $env:WINDIR 'System32\tar.exe'
+echo     if ^(Test-Path $tar^) {
+echo         ^& $tar -xf $zip -C $dest
+echo         if ^($LASTEXITCODE -ne 0^) { throw ^("tar.exe exited with code " + $LASTEXITCODE^) }
+echo     } else {
+echo         Expand-Archive -Path $zip -DestinationPath $dest -Force
+echo     }
 echo     Remove-Item $zip -Force
-echo     Write-Host ^("  [OK] Extracted to: " + $dest^)
+echo     Log ^("  [OK] Extracted to: " + $dest^)
 echo } catch {
-echo     Write-Host ^("  [ERROR] " + $_.Exception.Message^)
+echo     Log ^("  [ERROR] " + $_.Exception.Message^)
 echo     exit 1
 echo }
 ) > "!DL_SCRIPT!"
+
+:: AV interference check: if the .ps1 vanished between the redirect
+:: and now (very common with aggressive endpoint protection), bail
+:: with a targeted message instead of letting the script "vanish"
+:: by trying to run a file that no longer exists.
+if not exist "!DL_SCRIPT!" (
+    set "GOBBONET_LLAMA_DIR="
+    set "GOBBONET_PIN_TAG="
+    set "GOBBONET_LOG_DIR="
+    echo.
+    echo  [ERROR] The download helper script vanished right after being written.
+    echo          This is almost always your antivirus quarantining it.
+    echo.
+    echo          Fix: add a folder exclusion for:
+    echo            %~dp0
+    echo          ...then re-run launch.bat.
+    echo.
+    echo          Or install llama.cpp manually:
+    echo            https://github.com/ggml-org/llama.cpp/releases
+    echo            ^(get the file ending in: -win-vulkan-x64.zip^)
+    echo            Extract to: !LLAMA_DIR!\
+    goto :fatal
+)
+
 powershell -NoProfile -ExecutionPolicy Bypass -File "!DL_SCRIPT!"
 set "DL_RESULT=!errorlevel!"
 del /f /q "!DL_SCRIPT!" >nul 2>&1
 set "GOBBONET_LLAMA_DIR="
 set "GOBBONET_PIN_TAG="
+set "GOBBONET_LOG_DIR="
 if not "!DL_RESULT!"=="0" (
     echo.
     echo  [ERROR] Automatic download failed or did not verify.
-    echo         Download manually from:
-    echo         https://github.com/ggml-org/llama.cpp/releases
-    echo         Get the file ending in: -win-vulkan-x64.zip
-    echo         Extract to: !LLAMA_DIR!\
+    echo         A diagnostic log was written to:
+    echo           %~dp0gobbonet-download.log
+    echo.
+    echo         Most common causes:
+    echo           * Antivirus blocked the download or the script
+    echo             ^(add a folder exclusion for %~dp0^)
+    echo           * No internet, or GitHub temporarily unreachable
+    echo           * Disk full
+    echo.
+    echo         Or install manually:
+    echo           https://github.com/ggml-org/llama.cpp/releases
+    echo           Get the file ending in: -win-vulkan-x64.zip
+    echo           Extract to: !LLAMA_DIR!\
     goto :fatal
 )
 
