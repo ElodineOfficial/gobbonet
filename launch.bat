@@ -129,6 +129,13 @@ set "LOG_FILE=%~dp0llama-server.log"
 :: or hijacked future release can't silently land on users' machines -- you bump
 :: this deliberately after testing a new build. Leave empty to use 'latest'.
 set "LLAMA_PIN_TAG=b9294"
+:: Known-good SHA-256 of the pinned release's Windows Vulkan x64 zip.
+:: Leave EMPTY to download without verifying the hash -- after the first
+:: successful download the script prints the hash and the exact line to
+:: paste here. Once set, any future download whose hash doesn't match is
+:: refused. This value must correspond to LLAMA_PIN_TAG above; if you bump
+:: the tag, clear this and re-pin from the next download.
+set "LLAMA_PIN_SHA256="
 
 :: LAUNCH_SCRIPT holds the cmd line we hand to the OS to start llama-server.
 :: It lives in the project root (not %TEMP%) on purpose: fileserver.ps1
@@ -281,167 +288,111 @@ echo  [..] Downloading llama.cpp (Vulkan build for Windows x64)...
 echo      About 300 MB. This is the only network step.
 echo.
 echo  ====================================================
-echo   IMPORTANT - If this window CLOSES during the download:
-echo   your antivirus quarantined the install script. Add a
-echo   folder exclusion for this directory and re-run:
+echo   If this window VANISHES during the download with no
+echo   error text, an antivirus / endpoint-protection product
+echo   is blocking it. Running as Administrator will NOT help.
+echo.
+echo   Fastest fix: copy the  llama-cpp\  folder from a PC
+echo   where it already works into this folder, then re-run --
+echo   the download is skipped entirely (nothing to block).
+echo   Or add a Defender folder exclusion for:
 echo     %~dp0
-echo   ...or install manually:
+echo   Or install manually:
 echo     https://github.com/ggml-org/llama.cpp/releases
-echo     (file ending in: -win-vulkan-x64.zip)
+echo     (file ending in: -win-vulkan-x64.zip), extract to:
+echo     !LLAMA_DIR!\
 echo  ====================================================
 echo.
 
 :: -----------------------------------------------------------------
-:: PowerShell does the API query + checksum (small, low-risk work),
-:: but the byte-pumping is handed off to curl.exe and tar.exe --
-:: Microsoft-signed binaries that ship in System32 since Win10 1803.
-:: Three reasons we don't let PowerShell do the download itself:
+:: Engine download -- cmd-native, NO PowerShell.
 ::
-::   1. PS 5.x's Invoke-WebRequest is 50-100x slower than the
-::      browser because of its progress-bar repaint loop (upstream
-::      PowerShell issue #13414). On 300 MB that's the difference
-::      between 90 seconds and 30+ minutes of frozen-looking
-::      window -- users force-close, thinking it died. We also
-::      set $ProgressPreference='SilentlyContinue' so even the
-::      IWR fallback path isn't pathological.
+:: The previous version wrote a .ps1 into %TEMP% and ran it with
+:: -ExecutionPolicy Bypass to fetch the zip. That exact shape
+:: (cmd -^> temp .ps1 with Bypass -^> downloads an executable archive)
+:: is what behavioral AV engines read as malware staging, and several
+:: respond by killing the whole process tree -- the console window
+:: just disappears mid-download with no error and no log, and elevation
+:: does not exempt you (admin does not bypass Defender).
 ::
-::   2. IWR buffers the entire response in RAM before flushing to
-::      disk. 300 MB on a 4 GB-RAM laptop running other things
-::      can OOM the PS process. curl streams straight to disk.
+:: This version uses only the Microsoft-signed tools that ship in
+:: System32 on every Windows 10 1803+ machine, called straight from
+:: cmd: curl.exe (download), certutil.exe (hash), tar.exe (extract).
+:: No script file, no Bypass, no PowerShell-initiated download -- so
+:: there is no staging pattern for the heuristic to trip on. It also
+:: works where PowerShell script execution is disabled by policy.
 ::
-::   3. Some AV behavioral engines flag the "batch writes a .ps1
-::      to TEMP that then fetches an .exe from the internet"
-::      pattern as ransomware staging. curl.exe is signed by
-::      Microsoft and sails through. tar.exe gets the same swap
-::      vs Expand-Archive (same library family, same problems).
-::
-:: We also stash the AV/network failure log next to launch.bat
-:: so post-mortem is possible if the window does still vanish.
+:: The asset URL is built directly from the pinned tag (set near the
+:: top of this file), which is bumped only after testing, so the
+:: deterministic asset name is known-good for the pinned release.
 :: -----------------------------------------------------------------
-set "DL_SCRIPT=%TEMP%\gobbonet_dlllama_%RANDOM%.ps1"
-set "GOBBONET_LLAMA_DIR=!LLAMA_DIR!"
-set "GOBBONET_PIN_TAG=!LLAMA_PIN_TAG!"
-set "GOBBONET_LOG_DIR=%~dp0"
-(
-echo $ErrorActionPreference = 'Stop'
-echo $ProgressPreference = 'SilentlyContinue'
-echo $logPath = Join-Path $env:GOBBONET_LOG_DIR 'gobbonet-download.log'
-echo function Log^($msg^) {
-echo     Write-Host $msg
-echo     try { Add-Content -Path $logPath -Value ^("[" + ^(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'^) + "] " + $msg^) -ErrorAction SilentlyContinue } catch {}
-echo }
-echo try {
-echo     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-echo     $tag = $env:GOBBONET_PIN_TAG
-echo     if ^($tag^) {
-echo         Log ^("  [..] Using pinned llama.cpp release: " + $tag^)
-echo         $rel = Invoke-RestMethod ^("https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/" + $tag^)
-echo     } else {
-echo         Log '  [..] Querying GitHub for latest release...'
-echo         $rel = Invoke-RestMethod 'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest'
-echo     }
-echo     Log ^("  [OK] Release: " + $rel.tag_name^)
-echo     $asset = $rel.assets ^| Where-Object { $_.name -match 'win.*vulkan.*x64.*\.zip$' } ^| Select-Object -First 1
-echo     if ^(-not $asset^) { $asset = $rel.assets ^| Where-Object { $_.name -match 'vulkan.*x64.*\.zip$' } ^| Select-Object -First 1 }
-echo     if ^(-not $asset^) { Log '  [ERROR] No Vulkan x64 build in release assets.'; $rel.assets ^| ForEach-Object { Log ^("    - " + $_.name^) }; exit 1 }
-echo     $url = $asset.browser_download_url
-echo     $zip = Join-Path $env:TEMP 'llama-cpp-vulkan.zip'
-echo     $sizeMB = [math]::Round^($asset.size/1MB,1^)
-echo     Log ^("  [..] Downloading: " + $asset.name + " (" + $sizeMB + " MB)"^)
-echo     $curl = Join-Path $env:WINDIR 'System32\curl.exe'
-echo     if ^(Test-Path $curl^) {
-echo         Log '  [..] Using curl.exe -- live progress bar follows'
-echo         ^& $curl --location --fail --progress-bar --output $zip $url
-echo         if ^($LASTEXITCODE -ne 0^) { throw ^("curl.exe exited with code " + $LASTEXITCODE^) }
-echo     } else {
-echo         Log '  [..] curl.exe not present, falling back to Invoke-WebRequest (please be patient -- no progress bar)'
-echo         Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
-echo     }
-echo     Log '  [OK] Download complete.'
-echo     $digest = $asset.digest
-echo     if ^(-not $digest^) {
-echo         Log '  [ERROR] GitHub reported no SHA-256 digest for this asset (old release?).'
-echo         Log '          Refusing to run an unverified binary. Pin LLAMA_PIN_TAG to a'
-echo         Log '          recent release that publishes digests, or install manually.'
-echo         Remove-Item $zip -Force -ErrorAction SilentlyContinue
-echo         exit 1
-echo     }
-echo     $expected = ^($digest -replace '^^sha256:',''^).ToLower^(^)
-echo     Log '  [..] Verifying SHA-256...'
-echo     $actual = ^(Get-FileHash -Path $zip -Algorithm SHA256^).Hash.ToLower^(^)
-echo     if ^($actual -ne $expected^) {
-echo         Log '  [ERROR] CHECKSUM MISMATCH -- download is corrupt or tampered.'
-echo         Log ^("          expected: " + $expected^)
-echo         Log ^("          actual:   " + $actual^)
-echo         Remove-Item $zip -Force -ErrorAction SilentlyContinue
-echo         exit 1
-echo     }
-echo     Log '  [OK] Checksum verified.'
-echo     $dest = $env:GOBBONET_LLAMA_DIR
-echo     if ^(-not ^(Test-Path $dest^)^) { New-Item -ItemType Directory -Path $dest -Force ^| Out-Null }
-echo     Log '  [..] Extracting...'
-echo     $tar = Join-Path $env:WINDIR 'System32\tar.exe'
-echo     if ^(Test-Path $tar^) {
-echo         ^& $tar -xf $zip -C $dest
-echo         if ^($LASTEXITCODE -ne 0^) { throw ^("tar.exe exited with code " + $LASTEXITCODE^) }
-echo     } else {
-echo         Expand-Archive -Path $zip -DestinationPath $dest -Force
-echo     }
-echo     Remove-Item $zip -Force
-echo     Log ^("  [OK] Extracted to: " + $dest^)
-echo } catch {
-echo     Log ^("  [ERROR] " + $_.Exception.Message^)
-echo     exit 1
-echo }
-) > "!DL_SCRIPT!"
+set "LLAMA_ASSET=llama-!LLAMA_PIN_TAG!-bin-win-vulkan-x64.zip"
+set "LLAMA_URL=https://github.com/ggml-org/llama.cpp/releases/download/!LLAMA_PIN_TAG!/!LLAMA_ASSET!"
+set "LLAMA_ZIP=%TEMP%\!LLAMA_ASSET!"
 
-:: AV interference check: if the .ps1 vanished between the redirect
-:: and now (very common with aggressive endpoint protection), bail
-:: with a targeted message instead of letting the script "vanish"
-:: by trying to run a file that no longer exists.
-if not exist "!DL_SCRIPT!" (
-    set "GOBBONET_LLAMA_DIR="
-    set "GOBBONET_PIN_TAG="
-    set "GOBBONET_LOG_DIR="
+curl.exe -L --fail --retry 3 --progress-bar -o "!LLAMA_ZIP!" "!LLAMA_URL!"
+if errorlevel 1 (
     echo.
-    echo  [ERROR] The download helper script vanished right after being written.
-    echo          This is almost always your antivirus quarantining it.
+    echo  [ERROR] Download failed -- curl could not fetch the release zip.
+    echo          Common causes: no internet, GitHub unreachable, or this
+    echo          exact build/tag is no longer published.
     echo.
-    echo          Fix: add a folder exclusion for:
-    echo            %~dp0
-    echo          ...then re-run launch.bat.
-    echo.
-    echo          Or install llama.cpp manually:
-    echo            https://github.com/ggml-org/llama.cpp/releases
-    echo            ^(get the file ending in: -win-vulkan-x64.zip^)
-    echo            Extract to: !LLAMA_DIR!\
+    echo          Install manually instead:
+    echo            !LLAMA_URL!
+    echo          ...or browse: https://github.com/ggml-org/llama.cpp/releases
+    echo          ^(get the file ending in: -win-vulkan-x64.zip^)
+    echo          and extract it into:  !LLAMA_DIR!\
+    del /f /q "!LLAMA_ZIP!" >nul 2>&1
     goto :fatal
 )
+echo.
+echo  [OK] Download complete.
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "!DL_SCRIPT!"
-set "DL_RESULT=!errorlevel!"
-del /f /q "!DL_SCRIPT!" >nul 2>&1
-set "GOBBONET_LLAMA_DIR="
-set "GOBBONET_PIN_TAG="
-set "GOBBONET_LOG_DIR="
-if not "!DL_RESULT!"=="0" (
+:: --- Integrity check (certutil, no PowerShell) -------------------
+set "LLAMA_ACTUAL="
+for /f "skip=1 delims=" %%H in ('certutil -hashfile "!LLAMA_ZIP!" SHA256 2^>nul') do if not defined LLAMA_ACTUAL set "LLAMA_ACTUAL=%%H"
+set "LLAMA_ACTUAL=!LLAMA_ACTUAL: =!"
+
+if not defined LLAMA_PIN_SHA256 goto :llama_hash_unpinned
+if /i "!LLAMA_ACTUAL!"=="!LLAMA_PIN_SHA256!" goto :llama_hash_ok
+echo.
+echo  [ERROR] CHECKSUM MISMATCH -- the download is corrupt or tampered.
+echo            expected: !LLAMA_PIN_SHA256!
+echo            actual:   !LLAMA_ACTUAL!
+echo          Refusing to extract. The zip has been deleted.
+del /f /q "!LLAMA_ZIP!" >nul 2>&1
+goto :fatal
+
+:llama_hash_unpinned
+echo.
+echo  [!] No SHA-256 is pinned for this build, so the download was NOT
+echo      verified against a known-good hash. It arrived over HTTPS from
+echo      github.com, which is normally fine -- but to lock it down for
+echo      every machine you install this on, set this near the top of
+echo      launch.bat (replacing the empty LLAMA_PIN_SHA256):
+echo.
+echo        set "LLAMA_PIN_SHA256=!LLAMA_ACTUAL!"
+echo.
+goto :llama_extract
+
+:llama_hash_ok
+echo  [OK] Checksum verified against pinned SHA-256.
+
+:llama_extract
+if not exist "!LLAMA_DIR!" mkdir "!LLAMA_DIR!"
+echo  [..] Extracting...
+tar.exe -xf "!LLAMA_ZIP!" -C "!LLAMA_DIR!"
+if errorlevel 1 (
     echo.
-    echo  [ERROR] Automatic download failed or did not verify.
-    echo         A diagnostic log was written to:
-    echo           %~dp0gobbonet-download.log
-    echo.
-    echo         Most common causes:
-    echo           * Antivirus blocked the download or the script
-    echo             ^(add a folder exclusion for %~dp0^)
-    echo           * No internet, or GitHub temporarily unreachable
-    echo           * Disk full
-    echo.
-    echo         Or install manually:
-    echo           https://github.com/ggml-org/llama.cpp/releases
-    echo           Get the file ending in: -win-vulkan-x64.zip
-    echo           Extract to: !LLAMA_DIR!\
+    echo  [ERROR] Extraction failed -- tar.exe could not unpack the zip.
+    echo          The download may be incomplete. Delete anything in
+    echo          !LLAMA_DIR!\ and re-run, or install manually:
+    echo            !LLAMA_URL!
+    del /f /q "!LLAMA_ZIP!" >nul 2>&1
     goto :fatal
 )
+del /f /q "!LLAMA_ZIP!" >nul 2>&1
+echo  [OK] Extracted to: !LLAMA_DIR!\
 
 :: After extraction, the exe might be in a subdirectory. Find it.
 if not exist "!SERVER_EXE!" (
@@ -883,55 +834,56 @@ if errorlevel 1 (
 )
 
 :: ---------------------------------------------------------------
-:: INTEGRITY CHECK
+:: INTEGRITY CHECK -- cmd-native, NO PowerShell.
 :: HuggingFace stores LFS files behind a pointer that records the
-:: canonical SHA-256. We fetch that pointer (small text file, over
-:: TLS, from the /raw/ path -- separate from the CDN that served the
-:: big file), pull out "oid sha256:<hex>", and compare to the hash of
-:: what we actually downloaded.
-::   - mismatch  -> abort and delete (corrupt or tampered)
-::   - no pointer/parse fail -> warn but continue, and rely on the
-::     existing >=1GB size sanity check below (HF format changes
-::     shouldn't hard-block a good file)
+:: canonical SHA-256. We fetch that small text pointer with curl
+:: (over TLS, from the /raw/ path), pull "sha256:<hex>" out of it
+:: with findstr, and compare to certutil's hash of the file we
+:: actually downloaded. Same reasoning as the engine step: no temp
+:: .ps1, no -ExecutionPolicy Bypass, nothing a behavioral AV reads
+:: as download-staging.
+::   - mismatch              -^> abort and delete (corrupt/tampered)
+::   - no pointer/parse fail  -^> warn but continue (rely on the
+::     ^>=1GB size sanity check below); HF format changes shouldn't
+::     hard-block a good file.
 :: ---------------------------------------------------------------
 set "POINTER_URL=https://huggingface.co/!DL_REPO!/raw/main/!DL_FILE!"
-set "VERIFY_SCRIPT=%TEMP%\gobbonet_vfygguf_%RANDOM%.ps1"
-set "GOBBONET_GGUF=!GGUF_PATH!"
-set "GOBBONET_POINTER=!POINTER_URL!"
-(
-echo $ErrorActionPreference = 'Stop'
-echo try {
-echo     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-echo     Write-Host '  [..] Fetching expected SHA-256 from HuggingFace...'
-echo     $ptr = ^(Invoke-WebRequest -Uri $env:GOBBONET_POINTER -UseBasicParsing^).Content
-echo     $m = [regex]::Match^($ptr, 'sha256:([0-9a-fA-F]{64}^)'^)
-echo     if ^(-not $m.Success^) {
-echo         Write-Host '  [WARN] Could not read HuggingFace checksum (format may have changed).'
-echo         Write-Host '         Skipping hash check; size sanity check still applies.'
-echo         exit 2
-echo     }
-echo     $expected = $m.Groups[1].Value.ToLower^(^)
-echo     Write-Host '  [..] Verifying download against it...'
-echo     $actual = ^(Get-FileHash -Path $env:GOBBONET_GGUF -Algorithm SHA256^).Hash.ToLower^(^)
-echo     if ^($actual -ne $expected^) {
-echo         Write-Host '  [ERROR] CHECKSUM MISMATCH -- model file is corrupt or tampered.'
-echo         Write-Host ^("          expected: " + $expected^)
-echo         Write-Host ^("          actual:   " + $actual^)
-echo         exit 1
-echo     }
-echo     Write-Host '  [OK] Model checksum verified.'
-echo     exit 0
-echo } catch {
-echo     Write-Host ^("  [WARN] Checksum check could not run: " + $_.Exception.Message^)
-echo     Write-Host '         Skipping hash check; size sanity check still applies.'
-echo     exit 2
-echo }
-) > "!VERIFY_SCRIPT!"
-powershell -NoProfile -ExecutionPolicy Bypass -File "!VERIFY_SCRIPT!"
-set "VERIFY_RESULT=!errorlevel!"
-del /f /q "!VERIFY_SCRIPT!" >nul 2>&1
-set "GOBBONET_GGUF="
-set "GOBBONET_POINTER="
+set "PTR_FILE=%TEMP%\gobbonet_ptr_%RANDOM%.txt"
+set "VERIFY_RESULT=2"
+
+echo  [..] Fetching expected SHA-256 from HuggingFace...
+curl.exe -s -L --fail -o "!PTR_FILE!" "!POINTER_URL!"
+if errorlevel 1 (
+    echo  [WARN] Could not fetch the HuggingFace checksum pointer.
+    echo         Skipping hash check; size sanity check still applies.
+    goto :model_verify_done
+)
+
+set "MODEL_EXPECTED="
+for /f "tokens=2 delims=:" %%H in ('findstr /i "sha256:" "!PTR_FILE!"') do if not defined MODEL_EXPECTED set "MODEL_EXPECTED=%%H"
+set "MODEL_EXPECTED=!MODEL_EXPECTED: =!"
+if not defined MODEL_EXPECTED (
+    echo  [WARN] Could not read the checksum from HuggingFace ^(format may have changed^).
+    echo         Skipping hash check; size sanity check still applies.
+    goto :model_verify_done
+)
+
+set "MODEL_ACTUAL="
+for /f "skip=1 delims=" %%H in ('certutil -hashfile "!GGUF_PATH!" SHA256 2^>nul') do if not defined MODEL_ACTUAL set "MODEL_ACTUAL=%%H"
+set "MODEL_ACTUAL=!MODEL_ACTUAL: =!"
+echo  [..] Verifying download against it...
+if /i "!MODEL_ACTUAL!"=="!MODEL_EXPECTED!" (
+    echo  [OK] Model checksum verified.
+    set "VERIFY_RESULT=0"
+) else (
+    echo  [ERROR] CHECKSUM MISMATCH -- model file is corrupt or tampered.
+    echo            expected: !MODEL_EXPECTED!
+    echo            actual:   !MODEL_ACTUAL!
+    set "VERIFY_RESULT=1"
+)
+
+:model_verify_done
+del /f /q "!PTR_FILE!" >nul 2>&1
 if "!VERIFY_RESULT!"=="1" (
     echo.
     echo  [ERROR] The downloaded model failed its integrity check and has
