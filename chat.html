@@ -2780,6 +2780,28 @@ function loadState() {
           }
         }
       }
+
+      // Recover orphaned turns. If a thread ends in an assistant message
+      // that is completely empty (no content AND no reasoning), it's a
+      // placeholder from a generation that was killed before a single token
+      // landed — the page got navigated away / suspended in the first
+      // streaming tick. Leaving it renders as a broken blank bubble and, once
+      // present, makes the whole thread "look stuck." Drop it so the thread
+      // cleanly ends on the user's question, which they can resend or reroll.
+      //
+      // Partial replies (content has *some* text) are NOT touched — those are
+      // legitimately-interrupted answers the user still wants to read. The
+      // streaming-tick saves now make that the common case instead of total
+      // loss; only the zero-token race produces a true empty placeholder.
+      for (const thread of state.threads) {
+        if (!thread.messages || thread.messages.length === 0) continue;
+        const last = thread.messages[thread.messages.length - 1];
+        if (last && last.role === 'assistant' &&
+            !((last.content || '').trim()) && !((last.reasoning || '').trim())) {
+          thread.messages.pop();
+          console.log('[recover] Dropped an empty trailing assistant placeholder in thread', thread.id);
+        }
+      }
     }
   } catch (e) {
     console.error('Failed to load state:', e);
@@ -2821,7 +2843,13 @@ function redactedSyncJson(blob) {
   return JSON.stringify(redacted);
 }
 
-function saveState() {
+function saveState(opts) {
+  // opts.skipServerSchedule: write localStorage only, don't arm the debounced
+  // /state push. Used by the streaming-tick saves and the visibilitychange
+  // exit save — during a generation the server push always defers anyway
+  // (stateSyncWouldBeTransient), so scheduling it just burns a second
+  // JSON.stringify per tick on what may be a multi-MB blob on a phone.
+  const skipServerSchedule = !!(opts && opts.skipServerSchedule);
   try {
     // Deep-copy threads and strip runtime-only fields before saving
     const cleanThreads = state.threads.map(t => ({
@@ -2857,7 +2885,9 @@ function saveState() {
     // Server-side backup so we survive a LAN IP rotation. apiKey is
     // stripped before sending — see redactedSyncJson(). Debounced +
     // best-effort — see scheduleStateSync().
-    scheduleStateSync(redactedSyncJson(stateBlob));
+    if (!skipServerSchedule) {
+      scheduleStateSync(redactedSyncJson(stateBlob));
+    }
   } catch (e) {
     console.error('Failed to save state:', e);
   }
@@ -3018,6 +3048,53 @@ async function flushStateSync() {
     stateSync.inFlight = false;
     updateSyncIndicator();
   }
+}
+
+/**
+ * Collapse the 2s debounce and push the pending snapshot to /state right
+ * away. Called the instant a generation settles, so a completed reply can't
+ * be stranded in local-only purgatory if the user navigates away during the
+ * debounce window. The orphaned debounce timer (if any) is cleared so it
+ * can't fire a redundant second push; flushStateSync itself still defers
+ * cleanly if the state somehow isn't settled yet.
+ */
+function forceServerFlush() {
+  if (!STATE_SYNC_AVAILABLE) return;
+  if (stateSync.pushTimer) { clearTimeout(stateSync.pushTimer); stateSync.pushTimer = null; }
+  // Fire and forget — sync is best-effort and we never block the UI on it.
+  flushStateSync();
+}
+
+/**
+ * Last-chance flush when the page is being hidden or torn down. The browser
+ * gives us no async budget here, so we do the two things that survive:
+ *
+ *   1. A synchronous localStorage write (saveState) — this is what lets THIS
+ *      origin recover the in-progress reply on reload. localStorage.setItem
+ *      completes inline even inside pagehide.
+ *   2. A navigator.sendBeacon to /state, but ONLY when the state is settled.
+ *      A mid-stream / empty-placeholder snapshot must never become the
+ *      cross-device source of truth (that's the original blanking bug), so we
+ *      gate the beacon behind stateSyncWouldBeTransient() exactly like the
+ *      debounced path does.
+ *
+ * beacon=false skips the network beacon entirely — used on visibilitychange,
+ * which fires on every tab switch and would otherwise spam the server.
+ */
+function flushBeforeExit(opts) {
+  const beacon = !!(opts && opts.beacon);
+  try {
+    // Local save always. Skip arming the debounced push — the page is going
+    // away, so the timer would never fire; the beacon below is the real push.
+    saveState({ skipServerSchedule: true });
+    if (beacon && STATE_SYNC_AVAILABLE && !stateSyncWouldBeTransient() &&
+        typeof navigator !== 'undefined' && navigator.sendBeacon) {
+      const json = redactedSyncJson();
+      if (json && json !== '{}') {
+        navigator.sendBeacon(STATE_SYNC_URL, new Blob([json], { type: 'application/json' }));
+      }
+    }
+  } catch (_) {}
 }
 
 /**
@@ -4906,6 +4983,7 @@ async function sendMessage(overrideContent) {
     const decoder = new TextDecoder();
     let buffer = '';
     let lastRender = 0;
+    let lastSave = 0;
     let chunkCount = 0;
     let firstChunkLogged = false;
 
@@ -4938,6 +5016,15 @@ async function sendMessage(overrideContent) {
       if (now - lastRender > 80) {
         renderStreamingUpdate(assistantMsg);
         lastRender = now;
+      }
+      // Persist partial progress to localStorage every ~2.5s while streaming
+      // so a tab switch / navigation / phone suspend can't discard the reply
+      // mid-flight. Local-only: the /state push correctly defers until the
+      // generation settles (see stateSyncWouldBeTransient), so we skip arming
+      // it here and save the extra serialization on each tick.
+      if (now - lastSave > 2500) {
+        saveState({ skipServerSchedule: true });
+        lastSave = now;
       }
     }
 
@@ -4985,6 +5072,12 @@ async function sendMessage(overrideContent) {
   isGenerating = false;
   abortController = null;
   saveState();
+  // The turn has settled (content is final, even on abort/error). Push to the
+  // server backup NOW instead of waiting out the 2s debounce — if the user
+  // navigates away inside that window the completed reply would otherwise
+  // never reach /state and a later restore from a cleared origin would blank
+  // it. flushStateSync is a no-op if the state is still transient.
+  forceServerFlush();
   updateInputState();
   renderMessages();
   scrollToBottom();
@@ -5393,6 +5486,7 @@ async function regenerateFromThread(options = {}) {
     const decoder = new TextDecoder();
     let buffer = '';
     let lastRender = 0;
+    let lastSave = 0;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -5407,6 +5501,12 @@ async function regenerateFromThread(options = {}) {
       if (now - lastRender > 80) {
         renderStreamingUpdate(assistantMsg);
         lastRender = now;
+      }
+      // Persist partial progress every ~2.5s — see the matching note in
+      // sendMessage. Local-only; the /state push defers while generating.
+      if (now - lastSave > 2500) {
+        saveState({ skipServerSchedule: true });
+        lastSave = now;
       }
     }
   } catch (err) {
@@ -5437,6 +5537,7 @@ async function regenerateFromThread(options = {}) {
   isGenerating = false;
   abortController = null;
   saveState();
+  forceServerFlush();   // collapse the debounce — see sendMessage for rationale
   updateInputState();
   renderMessages();
   scrollToBottom();
@@ -6190,15 +6291,10 @@ function renderLandingPage() {
       const icon = p.icon || '&#9864;';
       const name = escapeHtml(p.name || 'Unnamed');
       const desc = escapeHtml((p.desc || '').slice(0, 80));
-      // If the preset has full card data, clicking installs it as a new character card.
-      // NOTE: JSON.stringify(JSON.stringify(p)) yields a JS string literal whose outer
-      // chars are " — dropping that raw into onclick="..." closes the attribute on the
-      // first inner quote and the handler silently dies as a syntax error. escapeHtml
-      // turns those " into &quot;, which the browser decodes back to " when reading
-      // the attribute, so the JS parser sees the intended string literal.
+      // If the preset has full card data, clicking installs it as a new character card
       const hasCardData = !!(p.writingStyle || p.personality);
       const clickAttr = hasCardData
-        ? `onclick="installDefaultChar(${escapeHtml(JSON.stringify(JSON.stringify(p)))})" title="Install as character card"`
+        ? `onclick="installDefaultChar(${JSON.stringify(JSON.stringify(p))})" title="Install as character card"`
         : `title="${name}"`;
       return `
         <div class="landing-preset-card ${hasCardData ? 'landing-preset-installable' : ''}" ${clickAttr}>
@@ -9539,6 +9635,34 @@ setInterval(() => {
 }, 5000);
 // Scheduler timer — checks every 30 seconds
 setInterval(checkSchedules, 30000);
+
+/* ================================================================
+   PAGE-LIFECYCLE PERSISTENCE
+
+   Streaming tokens live in memory and are only flushed to localStorage
+   on a ~2.5s tick (see sendMessage / regenerateFromThread). These two
+   handlers close the remaining gap: the page can be hidden or torn down
+   between ticks, and on mobile a fetch in a backgrounded tab is killed
+   within seconds — without a flush here the in-progress reply is lost and
+   the thread reloads with a blank turn.
+
+   visibilitychange→hidden: fires on every tab/app switch, the earliest
+   reliable "user left" signal on mobile. Local save only (no beacon), and
+   only while generating — when idle, localStorage is already current (every
+   state mutation saves), so the only thing that can be lost is in-flight
+   streaming progress. Skipping the idle case avoids re-serializing a
+   multi-MB blob on every routine tab toggle.
+
+   pagehide: fires on real navigation, tab close, and bfcache entry. Local
+   save AND a sendBeacon to /state when the state is settled, so a completed
+   turn reaches the server backup even if the user navigates inside the
+   debounce window. (beforeunload/unload are deliberately not used — they're
+   unreliable on mobile and disqualify the page from bfcache.)
+================================================================ */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && isGenerating) flushBeforeExit({ beacon: false });
+});
+window.addEventListener('pagehide', () => flushBeforeExit({ beacon: true }));
 </script>
 </body>
 </html>
