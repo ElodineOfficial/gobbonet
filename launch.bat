@@ -527,8 +527,8 @@ goto :write_model_json
 :: markers (MK_1..MK_8) and a recommended option number (REC).
 ::
 :: REC = best model that fits detected VRAM (flagship-first):
-::   >=16 GB -> 5 (Gemma 4 26B)   >=12 -> 8 (gpt-oss 20B)
-::   >=8  GB -> 4 (Llama 3.1 8B)  >=6  -> 1 (Gemma 3 4B)
+::   >=16 GB -> 8 (Gemma 4 26B)   >=12 -> 7 (DeepSeek-R1 8B)
+::   >=8  GB -> 3 (Llama 3.1 8B)  >=6  -> 1 (Gemma 3 4B)
 ::   cpu_only / tiny -> 2 (Llama 3.2 3B)
 :: MK_n is one of:
 ::   "[ RECOMMENDED FOR YOUR PC ]"      (the REC option)
@@ -570,7 +570,7 @@ set "REC=0"
 :: payload is pure single-quoted PowerShell + string concatenation (no
 :: embedded double quotes, no pipes, no '!', output is pure ASCII) so the
 :: redirect and for/f read it back cleanly regardless of console encoding.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; try { $h = ConvertFrom-Json (Get-Content -Raw '%~dp0hardware.json') } catch { $h = $null }; $min=@{1=6;2=4;3=8;4=8;5=16;6=18;7=10;8=12;9=8;10=24}; if (-not $h) { 'HW_OK=0'; 'REC=0'; 'HW_TIER=unknown'; 'HW_VRAM=0'; 'HW_RAM=0'; 'HW_DISK=0'; foreach($i in 1..10){ 'MK_' + $i + '=' }; exit }; $v=[int]$h.gpu.vram_gb; $t=[string]$h.recommended_tier; $ram=[int]$h.ram_gb; $disk=[int]$h.disk.free_gb; $rec=0; if($t -eq 'cpu_only'){ $rec=2 } elseif($v -ge 16){ $rec=5 } elseif($v -ge 12){ $rec=8 } elseif($v -ge 8){ $rec=4 } elseif($v -ge 6){ $rec=1 } else { $rec=2 }; 'HW_OK=1'; 'HW_TIER=' + $t; 'HW_VRAM=' + $v; 'HW_RAM=' + $ram; 'HW_DISK=' + $disk; 'REC=' + $rec; foreach($i in 1..10){ if($i -eq $rec){ $m='[ RECOMMENDED FOR YOUR PC ]' } elseif($t -eq 'cpu_only'){ if($min[$i] -le 6){ $m='' } else { $m='[ likely too slow without a GPU ]' } } elseif($v -ge $min[$i]){ $m='' } else { $m='[ needs ~' + $min[$i] + ' GB VRAM - will be slow ]' }; 'MK_' + $i + '=' + $m }" > "%~dp0.hw-parsed.env" 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; try { $h = ConvertFrom-Json (Get-Content -Raw '%~dp0hardware.json') } catch { $h = $null }; $min=@{1=6;2=4;3=8;4=8;5=8;6=8;7=10;8=16;9=16;10=24}; if (-not $h) { 'HW_OK=0'; 'REC=0'; 'HW_TIER=unknown'; 'HW_VRAM=0'; 'HW_RAM=0'; 'HW_DISK=0'; foreach($i in 1..10){ 'MK_' + $i + '=' }; exit }; $v=[int]$h.gpu.vram_gb; $t=[string]$h.recommended_tier; $ram=[int]$h.ram_gb; $disk=[int]$h.disk.free_gb; $rec=0; if($t -eq 'cpu_only'){ $rec=2 } elseif($v -ge 16){ $rec=8 } elseif($v -ge 12){ $rec=7 } elseif($v -ge 8){ $rec=3 } elseif($v -ge 6){ $rec=1 } else { $rec=2 }; 'HW_OK=1'; 'HW_TIER=' + $t; 'HW_VRAM=' + $v; 'HW_RAM=' + $ram; 'HW_DISK=' + $disk; 'REC=' + $rec; foreach($i in 1..10){ if($i -eq $rec){ $m='[ RECOMMENDED FOR YOUR PC ]' } elseif($t -eq 'cpu_only'){ if($min[$i] -le 6){ $m='' } else { $m='[ likely too slow without a GPU ]' } } elseif($v -ge $min[$i]){ $m='' } else { $m='[ needs ~' + $min[$i] + ' GB VRAM - will be slow ]' }; 'MK_' + $i + '=' + $m }" > "%~dp0.hw-parsed.env" 2>nul
 
 if exist "%~dp0.hw-parsed.env" (
     for /f "usebackq tokens=1,* delims==" %%K in ("%~dp0.hw-parsed.env") do set "%%K=%%L"
@@ -602,33 +602,33 @@ echo         Meta — ultra-light, surprisingly good chat
 echo.
 echo   ── MEDIUM (fits ~10-12 GB VRAM) ─────────────────
 echo.
-echo     [3] Mistral 7B v0.3        Q6_K  ~5.8 GB  !MK_3!
-echo         Mistral AI — tight instruction following
-echo.
-echo     [4] Llama 3.1 8B Instruct  Q6_K  ~6.1 GB  !MK_4!
+echo     [3] Llama 3.1 8B Instruct  Q6_K  ~6.1 GB  !MK_3!
 echo         Meta — solid all-rounder, 128K context
 echo.
-echo     [9] Command R 7B (12-2024) Q6_K  ~6.6 GB  !MK_9!
+echo     [4] Command R 7B (12-2024) Q6_K  ~6.6 GB  !MK_4!
 echo         Cohere — strong instruction following, 128K
 echo         Multilingual; no chain-of-thought
 echo.
-echo   ── LARGE (fits ~16 GB VRAM) ─────────────────────
+echo     [5] Granite 3.0 8B Instr.  Q6_K  ~6.6 GB  !MK_5!
+echo         IBM — clean, reliable general chat, 128K
 echo.
-echo     [5] Gemma 4 26B-A4B MoE    Q4_K_S  ~16 GB  !MK_5!
-echo         Google — MoE runs FAST despite large size
-echo         Great default for 16 GB GPUs
-echo.
-echo     [6] Qwen3 30B-A3B MoE      Q4_K_M  ~18 GB  !MK_6!
-echo         Alibaba — strong reasoning, 128K context
+echo     [6] GLM-Z1 9B (0414)       Q4_K_M ~5.8 GB  !MK_6!
+echo         Zhipu/THUDM — reasoning, strong at math
 echo         Emits chain-of-thought between ^<think^> tags
 echo.
-echo     [7] DeepSeek-R1 8B         Q8_0    ~8.5 GB  !MK_7!
+echo     [7] DeepSeek-R1 8B         Q8_0   ~8.5 GB  !MK_7!
 echo         Reasoning-focused model (Qwen3 distill)
 echo         Shows chain-of-thought by default
 echo.
-echo     [8] gpt-oss 20B            MXFP4   ~12 GB  !MK_8!
-echo         OpenAI — open-weights reasoning model
-echo         Uses Harmony channel format for CoT
+echo   ── LARGE (fits ~16 GB VRAM) ─────────────────────
+echo.
+echo     [8] Gemma 4 26B-A4B MoE    Q4_K_S ~16 GB   !MK_8!
+echo         Google — MoE runs FAST despite large size
+echo         Great default for 16 GB GPUs
+echo.
+echo     [9] Cydonia 24B v4.1       IQ4_XS ~12.8 GB !MK_9!
+echo         TheDrummer — Mistral Small 24B finetune
+echo         Creative/roleplay focus; v7-tekken template
 echo.
 echo    [10] Command R 35B (08-2024) Q4_K_S ~20 GB  !MK_10!
 echo         Cohere — heavy chat model, needs ~24 GB VRAM
@@ -661,10 +661,12 @@ if "!MODEL_CHOICE!"=="1" set "PICK_MIN=6"
 if "!MODEL_CHOICE!"=="2" set "PICK_MIN=4"
 if "!MODEL_CHOICE!"=="3" set "PICK_MIN=8"
 if "!MODEL_CHOICE!"=="4" set "PICK_MIN=8"
-if "!MODEL_CHOICE!"=="5" set "PICK_MIN=16"
-if "!MODEL_CHOICE!"=="6" set "PICK_MIN=18"
+if "!MODEL_CHOICE!"=="5" set "PICK_MIN=8"
+if "!MODEL_CHOICE!"=="6" set "PICK_MIN=8"
 if "!MODEL_CHOICE!"=="7" set "PICK_MIN=10"
-if "!MODEL_CHOICE!"=="8" set "PICK_MIN=12"
+if "!MODEL_CHOICE!"=="8" set "PICK_MIN=16"
+if "!MODEL_CHOICE!"=="9" set "PICK_MIN=16"
+if "!MODEL_CHOICE!"=="10" set "PICK_MIN=24"
 if not defined HW_VRAM set "HW_VRAM=0"
 if !HW_VRAM! gtr 0 if !PICK_MIN! gtr 0 if !HW_VRAM! lss !PICK_MIN! (
     echo.
@@ -703,18 +705,6 @@ if "!MODEL_CHOICE!"=="2" (
     goto :download_model
 )
 if "!MODEL_CHOICE!"=="3" (
-    set "DL_REPO=bartowski/Mistral-7B-Instruct-v0.3-GGUF"
-    set "DL_FILE=Mistral-7B-Instruct-v0.3-Q6_K.gguf"
-    set "MODEL_ID=mistral-7b"
-    set "MODEL_DISPLAY=Mistral 7B v0.3"
-    set "MODEL_FAMILY=mistral"
-    set "MODEL_MAX_CTX=32768"
-    set "MODEL_THINK_FMT=none"
-    set "CTX_SIZE=16384"
-    set "KV_CACHE_TYPE=f16"
-    goto :download_model
-)
-if "!MODEL_CHOICE!"=="4" (
     set "DL_REPO=bartowski/Meta-Llama-3.1-8B-Instruct-GGUF"
     set "DL_FILE=Meta-Llama-3.1-8B-Instruct-Q6_K.gguf"
     set "MODEL_ID=llama31-8b"
@@ -726,25 +716,37 @@ if "!MODEL_CHOICE!"=="4" (
     set "KV_CACHE_TYPE=q8_0"
     goto :download_model
 )
+if "!MODEL_CHOICE!"=="4" (
+    set "DL_REPO=bartowski/c4ai-command-r7b-12-2024-GGUF"
+    set "DL_FILE=c4ai-command-r7b-12-2024-Q6_K.gguf"
+    set "MODEL_ID=command-r7b"
+    set "MODEL_DISPLAY=Command R 7B (12-2024)"
+    set "MODEL_FAMILY=cohere"
+    set "MODEL_MAX_CTX=131072"
+    set "MODEL_THINK_FMT=none"
+    set "CTX_SIZE=32768"
+    set "KV_CACHE_TYPE=q8_0"
+    goto :download_model
+)
 if "!MODEL_CHOICE!"=="5" (
-    set "DL_REPO=bartowski/google_gemma-4-26B-A4B-it-GGUF"
-    set "DL_FILE=google_gemma-4-26B-A4B-it-Q4_K_S.gguf"
-    set "MODEL_ID=gemma4-26b"
-    set "MODEL_DISPLAY=Gemma 4 26B-A4B MoE"
-    set "MODEL_FAMILY=gemma"
-    set "MODEL_MAX_CTX=262144"
-    set "MODEL_THINK_FMT=gemma"
-    set "CTX_SIZE=16384"
+    set "DL_REPO=bartowski/granite-3.0-8b-instruct-GGUF"
+    set "DL_FILE=granite-3.0-8b-instruct-Q6_K.gguf"
+    set "MODEL_ID=granite-8b"
+    set "MODEL_DISPLAY=Granite 3.0 8B Instruct"
+    set "MODEL_FAMILY=granite"
+    set "MODEL_MAX_CTX=131072"
+    set "MODEL_THINK_FMT=none"
+    set "CTX_SIZE=32768"
     set "KV_CACHE_TYPE=q8_0"
     goto :download_model
 )
 if "!MODEL_CHOICE!"=="6" (
-    set "DL_REPO=bartowski/Qwen_Qwen3-30B-A3B-GGUF"
-    set "DL_FILE=Qwen_Qwen3-30B-A3B-Q4_K_M.gguf"
-    set "MODEL_ID=qwen3-30b"
-    set "MODEL_DISPLAY=Qwen3 30B-A3B MoE"
-    set "MODEL_FAMILY=qwen"
-    set "MODEL_MAX_CTX=131072"
+    set "DL_REPO=bartowski/THUDM_GLM-Z1-9B-0414-GGUF"
+    set "DL_FILE=THUDM_GLM-Z1-9B-0414-Q4_K_M.gguf"
+    set "MODEL_ID=glm-z1-9b"
+    set "MODEL_DISPLAY=GLM-Z1 9B (0414)"
+    set "MODEL_FAMILY=glm"
+    set "MODEL_MAX_CTX=32768"
     set "MODEL_THINK_FMT=deepseek"
     set "CTX_SIZE=16384"
     set "KV_CACHE_TYPE=q8_0"
@@ -763,26 +765,26 @@ if "!MODEL_CHOICE!"=="7" (
     goto :download_model
 )
 if "!MODEL_CHOICE!"=="8" (
-    set "DL_REPO=ggml-org/gpt-oss-20b-GGUF"
-    set "DL_FILE=gpt-oss-20b-mxfp4.gguf"
-    set "MODEL_ID=gpt-oss-20b"
-    set "MODEL_DISPLAY=gpt-oss 20B"
-    set "MODEL_FAMILY=gpt-oss"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=harmony"
+    set "DL_REPO=bartowski/google_gemma-4-26B-A4B-it-GGUF"
+    set "DL_FILE=google_gemma-4-26B-A4B-it-Q4_K_S.gguf"
+    set "MODEL_ID=gemma4-26b"
+    set "MODEL_DISPLAY=Gemma 4 26B-A4B MoE"
+    set "MODEL_FAMILY=gemma"
+    set "MODEL_MAX_CTX=262144"
+    set "MODEL_THINK_FMT=gemma"
     set "CTX_SIZE=16384"
     set "KV_CACHE_TYPE=q8_0"
     goto :download_model
 )
 if "!MODEL_CHOICE!"=="9" (
-    set "DL_REPO=bartowski/c4ai-command-r7b-12-2024-GGUF"
-    set "DL_FILE=c4ai-command-r7b-12-2024-Q6_K.gguf"
-    set "MODEL_ID=command-r7b"
-    set "MODEL_DISPLAY=Command R 7B (12-2024)"
-    set "MODEL_FAMILY=cohere"
+    set "DL_REPO=bartowski/TheDrummer_Cydonia-24B-v4.1-GGUF"
+    set "DL_FILE=TheDrummer_Cydonia-24B-v4.1-IQ4_XS.gguf"
+    set "MODEL_ID=cydonia-24b"
+    set "MODEL_DISPLAY=Cydonia 24B v4.1"
+    set "MODEL_FAMILY=mistral"
     set "MODEL_MAX_CTX=131072"
     set "MODEL_THINK_FMT=none"
-    set "CTX_SIZE=32768"
+    set "CTX_SIZE=16384"
     set "KV_CACHE_TYPE=q8_0"
     goto :download_model
 )
