@@ -6458,14 +6458,17 @@ function renderLandingPage() {
   if (defaultCharacters.length === 0) {
     presetHtml = `<div class="landing-empty">No default characters loaded — add entries to default-characters.json.</div>`;
   } else {
-    presetHtml = defaultCharacters.map(p => {
+    presetHtml = defaultCharacters.map((p, idx) => {
       const icon = p.icon || '&#9864;';
       const name = escapeHtml(p.name || 'Unnamed');
       const desc = escapeHtml((p.desc || '').slice(0, 80));
-      // If the preset has full card data, clicking installs it as a new character card
+      // If the preset has full card data, clicking installs it as a new character card.
+      // Pass the array index (a plain number) rather than embedding JSON in the
+      // attribute — JSON contains double quotes that would terminate the onclick
+      // attribute early and silently break the handler.
       const hasCardData = !!(p.writingStyle || p.personality);
       const clickAttr = hasCardData
-        ? `onclick="installDefaultChar(${JSON.stringify(JSON.stringify(p))})" title="Install as character card"`
+        ? `onclick="installDefaultChar(${idx})" title="Install as character card"`
         : `title="${name}"`;
       return `
         <div class="landing-preset-card ${hasCardData ? 'landing-preset-installable' : ''}" ${clickAttr}>
@@ -7017,9 +7020,11 @@ function goHome() {
 
 // Install a default character preset as a new user card.
 // Called from the landing page when a preset has writingStyle/personality data.
-function installDefaultChar(jsonStr) {
-  let preset;
-  try { preset = JSON.parse(jsonStr); } catch(e) { return; }
+// Receives the index of the preset in the defaultCharacters array (avoids
+// having to embed JSON in an HTML attribute, which breaks on quote characters).
+function installDefaultChar(idx) {
+  const preset = defaultCharacters[idx];
+  if (!preset) return;
   // Don't install duplicates (match by name)
   if (state.characterCards.find(c => c.name === preset.name)) {
     alert(`"${preset.name}" is already in your character list.`);
