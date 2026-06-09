@@ -4658,6 +4658,49 @@ function forkAt(messageIndex) {
     return copy;
   });
 
+  // ── Preserve branched history verbatim when it fits ──────────────
+  // The source thread may have compressed older turns: summarization
+  // marks them `archived` (folding them into thread.lore) and
+  // buildContextMessages then sends the running summary in their place.
+  // A fork copies those messages WITH their archived flag, and inherits
+  // thread.lore — which summarizes the source's ENTIRE archived range,
+  // including turns AFTER an early branch point. The result: branch off
+  // message 10 of a long, summarized thread and the model sees none of
+  // messages 0–10 (all still flagged archived) plus a summary describing
+  // events that never happened on this branch.
+  //
+  // Fix: if the shared history fits the context window verbatim, revive
+  // any archived turns and reset the branch's lore to the card's base
+  // world-info (startingLore), dropping the source's accumulated summary.
+  // The branch then behaves exactly as if you'd had this conversation —
+  // and only this conversation — from the start.
+  //
+  // If it does NOT fit (a late/large branch point), we keep the source's
+  // archived flags and inherited summary: that summary is the correct
+  // shared past, and the history couldn't be held verbatim anyway. The
+  // branch's own compression takes over from there.
+  const branchCard = getActiveCard();
+  // Same budget model as buildContextMessages: 90% of CTX, minus the 20%
+  // response reserve whose overshoot triggers compression. Staying under
+  // this line means the revived turns won't be re-compressed next turn.
+  const branchBudget    = Math.floor(state.settings.tokenLimit * 0.9);
+  const branchEffective = branchBudget - Math.floor(branchBudget * 0.20);
+  const branchBaseLore  = branchCard.startingLore || '';
+  const branchOverhead  = estimateTokens(branchCard.writingStyle) + 4
+    + ((branchBaseLore && branchCard.loreEnabled) ? estimateTokens(branchBaseLore) + 4 : 0);
+  const sharedFitsVerbatim =
+    (branchOverhead + estimateMessagesTokens(sharedMessages)) <= branchEffective;
+
+  let branchLore;
+  if (sharedFitsVerbatim) {
+    for (const m of sharedMessages) {
+      if (m.archived) m.archived = false;   // un-fold from the source's summary
+    }
+    branchLore = branchBaseLore;            // base world-info only, no stale summary
+  } else {
+    branchLore = thread.lore || '';         // keep the source summary as-is
+  }
+
   const baseName = thread.name.replace(/^⑂\s*/, '').slice(0, 38);
   const forks = getAllForksOf(thread.id);
   const branchNum = forks.filter(t => t.forkSource && t.forkSource.at === cutoff).length + 1;
@@ -4666,7 +4709,7 @@ function forkAt(messageIndex) {
     id: generateId(),
     name: `⑂ ${baseName}`,
     messages: sharedMessages,
-    lore: thread.lore || '',
+    lore: branchLore,
     createdAt: Date.now(),
     pinned: false,
     folderId: thread.folderId,
@@ -6458,17 +6501,14 @@ function renderLandingPage() {
   if (defaultCharacters.length === 0) {
     presetHtml = `<div class="landing-empty">No default characters loaded — add entries to default-characters.json.</div>`;
   } else {
-    presetHtml = defaultCharacters.map((p, idx) => {
+    presetHtml = defaultCharacters.map(p => {
       const icon = p.icon || '&#9864;';
       const name = escapeHtml(p.name || 'Unnamed');
       const desc = escapeHtml((p.desc || '').slice(0, 80));
-      // If the preset has full card data, clicking installs it as a new character card.
-      // Pass the array index (a plain number) rather than embedding JSON in the
-      // attribute — JSON contains double quotes that would terminate the onclick
-      // attribute early and silently break the handler.
+      // If the preset has full card data, clicking installs it as a new character card
       const hasCardData = !!(p.writingStyle || p.personality);
       const clickAttr = hasCardData
-        ? `onclick="installDefaultChar(${idx})" title="Install as character card"`
+        ? `onclick="installDefaultChar(${JSON.stringify(JSON.stringify(p))})" title="Install as character card"`
         : `title="${name}"`;
       return `
         <div class="landing-preset-card ${hasCardData ? 'landing-preset-installable' : ''}" ${clickAttr}>
@@ -7020,11 +7060,9 @@ function goHome() {
 
 // Install a default character preset as a new user card.
 // Called from the landing page when a preset has writingStyle/personality data.
-// Receives the index of the preset in the defaultCharacters array (avoids
-// having to embed JSON in an HTML attribute, which breaks on quote characters).
-function installDefaultChar(idx) {
-  const preset = defaultCharacters[idx];
-  if (!preset) return;
+function installDefaultChar(jsonStr) {
+  let preset;
+  try { preset = JSON.parse(jsonStr); } catch(e) { return; }
   // Don't install duplicates (match by name)
   if (state.characterCards.find(c => c.name === preset.name)) {
     alert(`"${preset.name}" is already in your character list.`);
