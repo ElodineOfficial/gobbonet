@@ -2636,14 +2636,22 @@ let defaultCharacters = [];
 /* ================================================================
    PERSISTENCE
 ================================================================ */
-function loadState() {
+function loadState(rawOverride) {
   try {
-    // Migrate from old storage key if needed
-    if (!localStorage.getItem(STORAGE_KEY) && localStorage.getItem(LEGACY_STORAGE_KEY)) {
-      localStorage.setItem(STORAGE_KEY, localStorage.getItem(LEGACY_STORAGE_KEY));
-      localStorage.removeItem(LEGACY_STORAGE_KEY);
+    // rawOverride lets callers (server-backup recovery, when the local copy
+    // was truncated by the quota) feed a JSON string directly instead of
+    // reading localStorage — same parse/migration path, no round-trip.
+    let raw;
+    if (rawOverride !== undefined && rawOverride !== null) {
+      raw = rawOverride;
+    } else {
+      // Migrate from old storage key if needed
+      if (!localStorage.getItem(STORAGE_KEY) && localStorage.getItem(LEGACY_STORAGE_KEY)) {
+        localStorage.setItem(STORAGE_KEY, localStorage.getItem(LEGACY_STORAGE_KEY));
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+      }
+      raw = localStorage.getItem(STORAGE_KEY);
     }
-    const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const saved = JSON.parse(raw);
       state.threads = saved.threads || [];
@@ -2843,102 +2851,19 @@ function redactedSyncJson(blob) {
   return JSON.stringify(redacted);
 }
 
-/* ================================================================
-   LOCALSTORAGE QUOTA RESILIENCE
+// True once a localStorage write has been refused for lack of space. We
+// keep persisting to the on-disk server backup and recover the full history
+// from it on reload (see checkServerStateOnBoot / restoreFromServer).
+let storageQuotaHit = false;
 
-   localStorage is hard-capped (~5 MB on mobile Safari). A long session —
-   especially with a thinking model whose chain-of-thought is persisted per
-   message, or a full-resolution photo dropped in as an avatar — crosses
-   that ceiling. The old saveState() ran setItem() and the server push in one
-   try block with setItem FIRST, so a QuotaExceededError jumped straight to
-   catch and skipped the server push: nothing was saved anywhere, silently.
-   In-memory state kept working (same-tab sends fine), but a reload showed
-   the last snapshot that fit and the server couldn't heal it because it
-   never received the new data either. That is the "everything's gone and
-   sync doesn't bring it back" report.
-
-   New model: the SERVER is the complete source of truth (no size cap), and
-   localStorage is a best-effort local cache that degrades gracefully — when
-   the full blob won't fit we shed the heaviest non-essential payload
-   (assistant chain-of-thought), oldest-first, never touching reply content,
-   until it fits. The server always receives the full, untrimmed blob.
-================================================================ */
-
+// localStorage quota errors surface under different names/codes across
+// browsers; normalize the check so we never mistake one for a generic error.
 function isQuotaError(e) {
-  if (!e) return false;
-  return e.name === 'QuotaExceededError' ||
-         e.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
-         e.code === 22 || e.code === 1014;
-}
-
-// True when the last local write had to drop data to fit. Surfaced in the
-// sync indicator so a silent failure becomes a visible "cache full" state.
-let localCacheDegraded = false;
-
-// Write a state blob (already-serialized JSON string) to localStorage,
-// degrading under quota. NEVER throws. Returns true if something usable was
-// written (full or trimmed), false if even the stripped forms failed — in
-// which case localStorage retains whatever it already held (a failed setItem
-// does not clear the prior value) and we lean entirely on the server backup.
-function writeLocalState(fullJson) {
-  try {
-    localStorage.setItem(STORAGE_KEY, fullJson);
-    localCacheDegraded = false;
-    return true;
-  } catch (e) {
-    if (!isQuotaError(e)) {
-      console.error('[storage] Local write failed (non-quota):', e);
-      return false;
-    }
-    console.warn('[storage] Over localStorage quota — shedding chain-of-thought to fit. ' +
-                 'Full copy still goes to the server backup.');
-  }
-
-  // Over quota. Clone so we trim a copy, never the live state.
-  let blob;
-  try { blob = JSON.parse(fullJson); }
-  catch (_) { return false; }
-
-  // Every assistant message still carrying reasoning, oldest-first.
-  const reasoned = [];
-  for (const t of (blob.threads || [])) {
-    for (const m of (t.messages || [])) {
-      if (m && m.role === 'assistant' && m.reasoning) reasoned.push(m);
-    }
-  }
-  // Drop reasoning in batches from the oldest end, retrying after each batch
-  // so we shed only as much as we must.
-  const BATCH = Math.max(1, Math.ceil(reasoned.length / 8));
-  for (let i = 0; i < reasoned.length; i += BATCH) {
-    for (let j = i; j < Math.min(i + BATCH, reasoned.length); j++) {
-      delete reasoned[j].reasoning;
-    }
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
-      localCacheDegraded = true;
-      return true;
-    } catch (e2) {
-      if (!isQuotaError(e2)) { console.error('[storage] Local write failed mid-trim:', e2); return false; }
-    }
-  }
-
-  // Reasoning all shed and it STILL won't fit — a genuinely huge text
-  // history. Last resort: drop search payloads + attachment text too.
-  for (const t of (blob.threads || [])) {
-    for (const m of (t.messages || [])) {
-      if (m) { delete m.searchData; delete m.attachmentText; }
-    }
-  }
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
-    localCacheDegraded = true;
-    return true;
-  } catch (e3) {
-    localCacheDegraded = true;
-    console.error('[storage] Could not fit state in localStorage even after trimming. ' +
-                  'Relying on the server backup.', e3);
-    return false;
-  }
+  return !!e && (
+    e.name === 'QuotaExceededError' ||
+    e.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||  // Firefox
+    e.code === 22 || e.code === 1014
+  );
 }
 
 function saveState(opts) {
@@ -2948,7 +2873,10 @@ function saveState(opts) {
   // (stateSyncWouldBeTransient), so scheduling it just burns a second
   // JSON.stringify per tick on what may be a multi-MB blob on a phone.
   const skipServerSchedule = !!(opts && opts.skipServerSchedule);
-  let stateBlob, fullJson;
+
+  // Build the snapshot once. If serialization itself fails there is nothing
+  // we can persist, so bail rather than half-saving.
+  let stateBlob, json;
   try {
     // Deep-copy threads and strip runtime-only fields before saving
     const cleanThreads = state.threads.map(t => ({
@@ -2960,7 +2888,6 @@ function saveState(opts) {
         return clean;
       })
     }));
-
     stateBlob = {
       threads: cleanThreads,
       activeThreadId: state.activeThreadId,
@@ -2977,29 +2904,50 @@ function saveState(opts) {
       macros: state.macros,
       seededDefaultMacros: state.seededDefaultMacros
     };
-    fullJson = JSON.stringify(stateBlob);
+    json = JSON.stringify(stateBlob);
   } catch (e) {
-    console.error('Failed to serialize state:', e);
+    console.error('Failed to serialize state for save:', e);
     return;
   }
 
-  // 1) Local cache write — degrades gracefully under quota, never throws.
-  writeLocalState(fullJson);
-
-  // 2) Server backup — attempted INDEPENDENTLY of the local write. This is
-  //    the core fix for "sync doesn't bring it back": a full localStorage
-  //    must never starve the server. The server has no 5 MB ceiling and is
-  //    the complete source of truth, so even when the local cache had to
-  //    shed COT (or couldn't write at all), the server still holds the full
-  //    record and a reload / fresh origin can restore everything. apiKey is
-  //    stripped before sending — see redactedSyncJson(). Debounced — see
-  //    scheduleStateSync().
+  // 1) DURABLE server-side backup FIRST, decoupled from the local write.
+  //    The /state file on the file server lives on disk and has no ~5MB
+  //    ceiling. Scheduling it before (and independent of) the localStorage
+  //    write means a local quota failure can no longer also kill the backup —
+  //    the complete conversation still reaches durable storage, and a reload
+  //    can recover it. apiKey is stripped before sending; see redactedSyncJson().
+  //    (Streaming ticks pass skipServerSchedule and defer the push by design.)
   if (!skipServerSchedule) {
-    try { scheduleStateSync(redactedSyncJson(stateBlob)); }
-    catch (e) { console.warn('[sync] Could not schedule server push:', e); }
+    scheduleStateSync(redactedSyncJson(stateBlob));
   }
 
-  try { updateSyncIndicator(); } catch (_) {}
+  // 2) Fast local cache for an instant reload on this origin. On long
+  //    histories this can exceed the localStorage quota; if it does we must
+  //    NOT swallow it silently (that swallow is what froze the stored copy
+  //    while the screen kept growing, so a back/reload showed a stale chat).
+  try {
+    localStorage.setItem(STORAGE_KEY, json);
+    if (storageQuotaHit) {
+      // We fit again (e.g. after deleting some chats). Clear the warning.
+      storageQuotaHit = false;
+      if (typeof stateSync !== 'undefined' && stateSync.status === 'quota') {
+        stateSync.status = 'ok';
+        updateSyncIndicator();
+      }
+    }
+  } catch (e) {
+    if (isQuotaError(e)) {
+      if (!storageQuotaHit) {
+        console.warn('[storage] localStorage quota exceeded — the on-disk server ' +
+                     'backup is now the source of truth for this conversation. ' +
+                     'Reload to pull the full history back.');
+      }
+      storageQuotaHit = true;
+      if (STATE_SYNC_AVAILABLE) { stateSync.status = 'quota'; updateSyncIndicator(); }
+    } else {
+      console.error('Failed to save state to localStorage:', e);
+    }
+  }
 }
 
 function getActiveCard() {
@@ -3243,14 +3191,30 @@ async function checkServerStateOnBoot() {
   const localEmpty = !state.threads || state.threads.length === 0;
   const serverMtime = (info && typeof info.mtime === 'number') ? info.mtime : 0;
   const serverSize = (info && typeof info.size === 'number') ? info.size : 0;
+  let localSize = 0;
+  try { localSize = redactedSyncJson().length; } catch (_) {}
 
   // Server has a backup that's newer than what we last synced (i.e. another
   // origin/device wrote after we last read), OR local is empty.
   const serverIsNewer = serverMtime > stateSync.lastKnownMtime;
+  // Server holds materially more than our local copy. With "not newer than
+  // what we last synced", this is the signature of a localStorage quota
+  // truncation on THIS origin: we pushed the full conversation to the server,
+  // but the local cache write was refused for space and froze a partial copy.
+  const serverHasMore = localSize > 0 && serverSize > localSize * 1.2;
 
   if (localEmpty && serverSize > 0) {
     // Auto-restore — nothing to lose
     console.log('[sync] Local empty, restoring from server backup');
+    await restoreFromServer({ silent: true });
+  } else if (!localEmpty && !serverIsNewer && serverHasMore) {
+    // Quota-truncation recovery (the bug this fix targets). The server copy
+    // is complete and is not a competing newer edit, so pull it back and the
+    // replies that never fit into localStorage reappear. restoreFromServer
+    // applies in memory if it still cannot fit locally.
+    console.warn('[sync] Local copy (' + localSize + ') smaller than server backup (' +
+                 serverSize + ') with no newer remote edit — recovering full history ' +
+                 'from server (local was truncated by the storage quota).');
     await restoreFromServer({ silent: true });
   } else if (!localEmpty && serverIsNewer) {
     // Conflict: server has newer data than we know about. Don't auto-clobber.
@@ -3264,8 +3228,6 @@ async function checkServerStateOnBoot() {
     // data. Trade-off: legitimately deleting >50% of your chats on another
     // device won't propagate to this one on the next boot (re-do the delete
     // and it will). Preserving data beats silently dropping it.
-    let localSize = 0;
-    try { localSize = redactedSyncJson().length; } catch (_) {}
     if (localSize > 0 && serverSize < localSize * 0.5) {
       console.warn('[sync] Server is newer but much smaller (' + serverSize +
                    ' vs local ' + localSize + ') — keeping local, re-publishing.');
@@ -3309,24 +3271,32 @@ async function restoreFromServer(opts) {
     const parsed = JSON.parse(text);
     if (!parsed || typeof parsed !== 'object') throw new Error('malformed backup');
 
-    // Write to localStorage and reload to apply cleanly. This avoids
-    // half-applied state if the in-memory app references things that
-    // don't exist in the restored state. The server blob can be larger than
-    // localStorage holds (no cap server-side), so write through the
-    // quota-aware path — it sheds COT to fit rather than failing the whole
-    // restore. The server keeps the full record either way.
-    const wrote = writeLocalState(text);
     if (mtimeHeader) {
       stateSync.lastKnownMtime = parseInt(mtimeHeader, 10) || stateSync.lastKnownMtime;
       persistSyncMeta();
     }
-    if (!wrote) {
-      if (!opts.silent) alert('Could not restore: the backup is larger than this device\'s local storage can hold, even after trimming. Try removing large avatars or old threads on the device that created it.');
-      return false;
+    // Prefer caching locally and reloading for a perfectly clean apply. But
+    // if the backup is too big for localStorage — the exact case that caused
+    // the data loss we are recovering from — the write throws; reloading then
+    // would just re-read the truncated copy and lose the data again. So on a
+    // quota error, apply the restored state IN MEMORY and re-render instead.
+    try {
+      localStorage.setItem(STORAGE_KEY, text);
+      location.reload();
+      return true;
+    } catch (e) {
+      if (!isQuotaError(e)) throw e;
+      console.warn('[sync] Restored backup is larger than localStorage allows; ' +
+                   'applying in memory (local cache stays partial, server backup ' +
+                   'is complete).');
+      storageQuotaHit = true;
+      loadState(text);              // parse + migrate the full blob into state
+      state.activeThreadId = null;  // land on the dashboard like a normal boot
+      if (STATE_SYNC_AVAILABLE) stateSync.status = 'quota';
+      updateSyncIndicator();
+      if (typeof render === 'function') render();
+      return true;
     }
-    // Reload to re-run loadState() with the restored data
-    location.reload();
-    return true;
   } catch (e) {
     console.error('[sync] Restore failed:', e);
     if (!opts.silent) alert('Could not restore from server: ' + e.message);
@@ -3380,29 +3350,17 @@ function updateSyncIndicator() {
     const footer = document.querySelector('.sidebar-footer') || document.querySelector('.sidebar') || document.body;
     footer.appendChild(el);
   }
-  const icons = { idle: '○', syncing: '⟳', ok: '✓', error: '!', disabled: '' };
+  const icons = { idle: '○', syncing: '⟳', ok: '✓', error: '!', quota: '⚠', disabled: '' };
   const labels = {
     idle: 'sync idle',
     syncing: 'syncing…',
     ok: 'synced',
     error: 'sync error: ' + (stateSync.lastError || 'unknown'),
+    quota: 'local storage full — backed up to server (click to restore full history)',
     disabled: ''
   };
-  if (localCacheDegraded) {
-    // The full record is on the server, but this device's localStorage is
-    // full so the local copy was trimmed (chain-of-thought shed from older
-    // turns). Make it visible rather than silent — the conversation text is
-    // safe, but the user may want to export and prune, or shrink an avatar.
-    el.textContent = '⚠ local cache full (server backup OK)';
-    el.dataset.status = 'full';
-    el.title = 'This device\'s local storage is full, so older reasoning was dropped from the local copy. ' +
-               'Your full history is backed up on the server. Tap to restore from the server, or export and ' +
-               'prune old threads / large avatars to free space.';
-    return;
-  }
   el.textContent = (icons[stateSync.status] || '') + ' ' + (labels[stateSync.status] || '');
   el.dataset.status = stateSync.status;
-  el.title = 'Click to manually restore from the server backup';
 }
 
 /**
@@ -3989,58 +3947,16 @@ function previewAvatar(inputId, previewId) {
   }
 }
 
-/* Downscale an image File to a bounded dimension and return a data URL via
-   a Promise. This caps a major localStorage bloat source: a full-resolution
-   phone photo dropped in as an avatar or chat image is several MB of base64
-   that otherwise lives in the state blob forever and is a prime way a long
-   session crosses the localStorage quota. Falls back to the raw bytes if
-   anything about decode/encode fails, so an odd image never blocks an
-   upload, and never returns something larger than the original.
-   mime 'image/png' preserves transparency (avatars); 'image/jpeg' is far
-   smaller (backgrounds, chat images — alpha doesn't matter there). */
-function loadDownscaledDataUrl(file, maxDim, mime, quality) {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onerror = () => resolve(null);
-    reader.onload = (e) => {
-      const raw = e.target.result;
-      const img = new Image();
-      img.onerror = () => resolve(raw); // undecodable (e.g. SVG/exotic) — keep original
-      img.onload = () => {
-        try {
-          let w = img.naturalWidth || img.width;
-          let h = img.naturalHeight || img.height;
-          if (!w || !h) return resolve(raw);
-          if (w > maxDim || h > maxDim) {
-            const scale = maxDim / Math.max(w, h);
-            w = Math.max(1, Math.round(w * scale));
-            h = Math.max(1, Math.round(h * scale));
-          }
-          const canvas = document.createElement('canvas');
-          canvas.width = w; canvas.height = h;
-          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-          const out = canvas.toDataURL(mime || 'image/jpeg', quality != null ? quality : 0.82);
-          resolve(out && out.length < raw.length ? out : raw);
-        } catch (_) {
-          resolve(raw);
-        }
-      };
-      img.src = raw;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
 function handleAvatarFile(fileInput, textInputId, previewId) {
   const file = fileInput.files[0];
   if (!file) return;
-  // Avatars are shown small; cap at 256px and keep PNG so transparency
-  // survives. Bounds a photo avatar from multiple MB down to ~100-200 KB.
-  loadDownscaledDataUrl(file, 256, 'image/png').then((dataUrl) => {
-    if (!dataUrl) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const dataUrl = e.target.result;
     document.getElementById(textInputId).value = dataUrl;
     document.getElementById(previewId).innerHTML = `<img src="${dataUrl}" alt="">`;
-  });
+  };
+  reader.readAsDataURL(file);
 }
 
 /* ================================================================
@@ -4658,49 +4574,6 @@ function forkAt(messageIndex) {
     return copy;
   });
 
-  // ── Preserve branched history verbatim when it fits ──────────────
-  // The source thread may have compressed older turns: summarization
-  // marks them `archived` (folding them into thread.lore) and
-  // buildContextMessages then sends the running summary in their place.
-  // A fork copies those messages WITH their archived flag, and inherits
-  // thread.lore — which summarizes the source's ENTIRE archived range,
-  // including turns AFTER an early branch point. The result: branch off
-  // message 10 of a long, summarized thread and the model sees none of
-  // messages 0–10 (all still flagged archived) plus a summary describing
-  // events that never happened on this branch.
-  //
-  // Fix: if the shared history fits the context window verbatim, revive
-  // any archived turns and reset the branch's lore to the card's base
-  // world-info (startingLore), dropping the source's accumulated summary.
-  // The branch then behaves exactly as if you'd had this conversation —
-  // and only this conversation — from the start.
-  //
-  // If it does NOT fit (a late/large branch point), we keep the source's
-  // archived flags and inherited summary: that summary is the correct
-  // shared past, and the history couldn't be held verbatim anyway. The
-  // branch's own compression takes over from there.
-  const branchCard = getActiveCard();
-  // Same budget model as buildContextMessages: 90% of CTX, minus the 20%
-  // response reserve whose overshoot triggers compression. Staying under
-  // this line means the revived turns won't be re-compressed next turn.
-  const branchBudget    = Math.floor(state.settings.tokenLimit * 0.9);
-  const branchEffective = branchBudget - Math.floor(branchBudget * 0.20);
-  const branchBaseLore  = branchCard.startingLore || '';
-  const branchOverhead  = estimateTokens(branchCard.writingStyle) + 4
-    + ((branchBaseLore && branchCard.loreEnabled) ? estimateTokens(branchBaseLore) + 4 : 0);
-  const sharedFitsVerbatim =
-    (branchOverhead + estimateMessagesTokens(sharedMessages)) <= branchEffective;
-
-  let branchLore;
-  if (sharedFitsVerbatim) {
-    for (const m of sharedMessages) {
-      if (m.archived) m.archived = false;   // un-fold from the source's summary
-    }
-    branchLore = branchBaseLore;            // base world-info only, no stale summary
-  } else {
-    branchLore = thread.lore || '';         // keep the source summary as-is
-  }
-
   const baseName = thread.name.replace(/^⑂\s*/, '').slice(0, 38);
   const forks = getAllForksOf(thread.id);
   const branchNum = forks.filter(t => t.forkSource && t.forkSource.at === cutoff).length + 1;
@@ -4709,7 +4582,7 @@ function forkAt(messageIndex) {
     id: generateId(),
     name: `⑂ ${baseName}`,
     messages: sharedMessages,
-    lore: branchLore,
+    lore: thread.lore || '',
     createdAt: Date.now(),
     pinned: false,
     folderId: thread.folderId,
@@ -8344,13 +8217,12 @@ function previewBg() {
 function handleBgFile(fileInput) {
   const file = fileInput.files[0];
   if (!file) return;
-  // Backgrounds are full-bleed; allow more detail (1280px) but re-encode as
-  // JPEG so a 4 MB photo lands around 150-300 KB instead of bloating state.
-  loadDownscaledDataUrl(file, 1280, 'image/jpeg', 0.82).then((dataUrl) => {
-    if (!dataUrl) return;
-    document.getElementById('card-bg').value = dataUrl;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    document.getElementById('card-bg').value = e.target.result;
     previewBg();
-  });
+  };
+  reader.readAsDataURL(file);
 }
 
 /* ================================================================
@@ -8774,14 +8646,14 @@ function addAttachments(fileList) {
     }
 
     if (isImg) {
-      // Stored for display only — local text model can't see it. Downscale
-      // (1024px JPEG) before stashing: these data URLs persist in the thread
-      // history, so full-res photos are a long-session quota killer.
-      loadDownscaledDataUrl(file, 1024, 'image/jpeg', 0.82).then((dataUrl) => {
-        if (!dataUrl) { _pendingAttachments.push({ ...base, kind: 'skip', skipped: 'read error' }); renderAttachTray(); return; }
-        _pendingAttachments.push({ ...base, kind: 'image', dataUrl });
+      // Stored for display only — local text model can't see it.
+      const reader = new FileReader();
+      reader.onload = e => {
+        _pendingAttachments.push({ ...base, kind: 'image', dataUrl: e.target.result });
         renderAttachTray();
-      });
+      };
+      reader.onerror = () => { _pendingAttachments.push({ ...base, kind: 'skip', skipped: 'read error' }); renderAttachTray(); };
+      reader.readAsDataURL(file);
     } else if (isTextFile(file)) {
       const reader = new FileReader();
       reader.onload = e => {
