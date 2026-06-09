@@ -1,10 +1,24 @@
 @echo off
+:: ---------------------------------------------------------------
+:: KEEP-OPEN GUARD -- this window can NEVER silently vanish.
+:: If anything fails (a crash, a blocked tool, a bad path, even a
+:: stray syntax error), the message stays on screen instead of the
+:: window closing too fast to read. We relaunch ourselves once
+:: inside "cmd /k", which holds the window open at a prompt no
+:: matter how the script exits. The env var is inherited by the
+:: relaunch, so this happens exactly once and then never again.
+:: ---------------------------------------------------------------
+if not defined GOBBONET_KEEPOPEN (
+    set "GOBBONET_KEEPOPEN=1"
+    cmd /k ""%~f0" %*"
+    exit /b
+)
 setlocal EnableDelayedExpansion
-title Gobbonet — Local AI Chat [llama.cpp]
+title Gobbonet - Local AI Chat [llama.cpp]
 color 0A
 
 :: ===============================================================
-:: CONFIG — edit these if you want a different model or port
+:: CONFIG - edit these if you want a different model or port
 :: ===============================================================
 set "SERVER_PORT=11434"
 set "CTX_SIZE=16384"
@@ -63,14 +77,14 @@ for /f "usebackq delims=" %%S in ("!SECRET_FILE!") do set "ACCESS_SECRET=%%S"
 ::   q8_0  = 8-bit quantized (~30-45K tokens on 16 GB) [DEFAULT]
 ::   q4_0  = 4-bit quantized (65K+ tokens, slight quality loss)
 ::
-:: MODEL_GGUF — leave empty to auto-detect, or set a specific filename.
+:: MODEL_GGUF - leave empty to auto-detect, or set a specific filename.
 ::   If only one .gguf exists in models\, it is used automatically.
 ::   If multiple .gguf files exist, the script will ask you to choose.
 
-:: Model metadata — set automatically by the download menu or filename
+:: Model metadata - set automatically by the download menu or filename
 :: detection. You can also set these manually if you know your model.
 ::
-:: MODEL_THINK_FMT — how the model emits chain-of-thought:
+:: MODEL_THINK_FMT - how the model emits chain-of-thought:
 ::   none     = no thinking         (Llama, Mistral, Phi, Gemma 3 base, Command R)
 ::   deepseek = <think>...</think>  (R1, Qwen3, QwQ, GLM thinking, Granite, Hunyuan)
 ::   harmony  = <|channel|>...      (gpt-oss-20b, gpt-oss-120b)
@@ -84,7 +98,7 @@ set "MODEL_FAMILY=custom"
 set "MODEL_MAX_CTX=131072"
 set "MODEL_THINK_FMT=none"
 
-:: MODEL_USE_JINJA / MODEL_CHAT_TEMPLATE — chat-template handling.
+:: MODEL_USE_JINJA / MODEL_CHAT_TEMPLATE - chat-template handling.
 ::   Default is --jinja (use the template baked into the GGUF). That works
 ::   for most modern GGUFs (Gemma 4 channels, gpt-oss Harmony, Mistral Small
 ::   v7-tekken, Qwen3 think mode, etc.).
@@ -148,7 +162,7 @@ set "LAUNCH_SCRIPT=%~dp0.llama-launch.cmd"
 set "SWAP_LOCK=%~dp0.swap-in-progress"
 set "SWAP_STATUS=%~dp0.swap-status.json"
 
-:: Model GGUF — set this to use a specific file.
+:: Model GGUF - set this to use a specific file.
 :: Leave empty to auto-detect the first .gguf in the models folder.
 set "MODEL_GGUF="
 
@@ -230,9 +244,9 @@ exit /b
 :main
 echo.
 echo  ====================================================
-echo       GOBBONET — LOCAL AI CHAT
+echo       GOBBONET - LOCAL AI CHAT
 echo       Powered by llama.cpp  //  Vulkan GPU
-echo       PRIVACY: FULLY OFFLINE — ZERO TELEMETRY
+echo       PRIVACY: FULLY OFFLINE - ZERO TELEMETRY
 echo  ====================================================
 echo.
 
@@ -253,7 +267,7 @@ if exist "!SERVER_EXE!" (
     goto :check_model
 )
 
-:: Server not at expected root — check subdirectories (common after zip extraction)
+:: Server not at expected root - check subdirectories (common after zip extraction)
 if exist "!LLAMA_DIR!" (
     for /r "!LLAMA_DIR!" %%F in (llama-server.exe) do (
         echo  [OK] Found llama-server in subdirectory: %%F
@@ -365,7 +379,7 @@ goto :fatal
 
 :llama_hash_unpinned
 echo.
-echo  [!] No SHA-256 is pinned for this build, so the download was NOT
+echo  [*] No SHA-256 is pinned for this build, so the download was NOT
 echo      verified against a known-good hash. It arrived over HTTPS from
 echo      github.com, which is normally fine -- but to lock it down for
 echo      every machine you install this on, set this near the top of
@@ -400,7 +414,6 @@ if not exist "!SERVER_EXE!" (
     for /r "!LLAMA_DIR!" %%F in (llama-server.exe) do (
         echo  [OK] Found: %%F
         set "SERVER_EXE=%%F"
-        :: Update LLAMA_DIR to match
         set "LLAMA_DIR=%%~dpF"
         goto :server_found
     )
@@ -446,7 +459,7 @@ if !GGUF_COUNT! == 1 (
     )
 )
 
-:: Multiple GGUFs found — let the user choose
+:: Multiple GGUFs found - let the user choose
 echo  [..] Multiple model files found in models\
 echo.
 set "GGUF_IDX=0"
@@ -507,7 +520,7 @@ if exist "!ID_SCRIPT!" (
         echo       Using llama-server built-in template: !MODEL_CHAT_TEMPLATE!  ^(--jinja disabled^)
     )
 ) else (
-    echo  [!!] identify-model.ps1 not found next to launch.bat.
+    echo  [*] identify-model.ps1 not found next to launch.bat.
     echo       Falling back to generic settings ^(embedded template via --jinja^).
     echo  !GGUF_BASENAME! | findstr /i /c:"think" /c:"reason" >nul 2>&1
     if not errorlevel 1 set "MODEL_THINK_FMT=deepseek"
@@ -527,8 +540,8 @@ goto :write_model_json
 :: markers (MK_1..MK_8) and a recommended option number (REC).
 ::
 :: REC = best model that fits detected VRAM (flagship-first):
-::   >=16 GB -> 8 (Gemma 4 26B)   >=12 -> 7 (DeepSeek-R1 8B)
-::   >=8  GB -> 3 (Llama 3.1 8B)  >=6  -> 1 (Gemma 3 4B)
+::   >=16 GB -> 5 (Gemma 4 26B)   >=12 -> 8 (gpt-oss 20B)
+::   >=8  GB -> 4 (Llama 3.1 8B)  >=6  -> 1 (Gemma 3 4B)
 ::   cpu_only / tiny -> 2 (Llama 3.2 3B)
 :: MK_n is one of:
 ::   "[ RECOMMENDED FOR YOUR PC ]"      (the REC option)
@@ -548,7 +561,7 @@ echo.
 if exist "%~dp0hardware-probe.ps1" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0hardware-probe.ps1" -OutputPath "%~dp0hardware.json" -ModelsDir "!MODEL_DIR!"
 ) else (
-    echo  [!!] hardware-probe.ps1 not found -- showing the full catalog
+    echo  [*] hardware-probe.ps1 not found -- showing the full catalog
     echo       without hardware-based suggestions.
 )
 echo.
@@ -570,7 +583,7 @@ set "REC=0"
 :: payload is pure single-quoted PowerShell + string concatenation (no
 :: embedded double quotes, no pipes, no '!', output is pure ASCII) so the
 :: redirect and for/f read it back cleanly regardless of console encoding.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; try { $h = ConvertFrom-Json (Get-Content -Raw '%~dp0hardware.json') } catch { $h = $null }; $min=@{1=6;2=4;3=8;4=8;5=8;6=8;7=10;8=16;9=16;10=24}; if (-not $h) { 'HW_OK=0'; 'REC=0'; 'HW_TIER=unknown'; 'HW_VRAM=0'; 'HW_RAM=0'; 'HW_DISK=0'; foreach($i in 1..10){ 'MK_' + $i + '=' }; exit }; $v=[int]$h.gpu.vram_gb; $t=[string]$h.recommended_tier; $ram=[int]$h.ram_gb; $disk=[int]$h.disk.free_gb; $rec=0; if($t -eq 'cpu_only'){ $rec=2 } elseif($v -ge 16){ $rec=8 } elseif($v -ge 12){ $rec=7 } elseif($v -ge 8){ $rec=3 } elseif($v -ge 6){ $rec=1 } else { $rec=2 }; 'HW_OK=1'; 'HW_TIER=' + $t; 'HW_VRAM=' + $v; 'HW_RAM=' + $ram; 'HW_DISK=' + $disk; 'REC=' + $rec; foreach($i in 1..10){ if($i -eq $rec){ $m='[ RECOMMENDED FOR YOUR PC ]' } elseif($t -eq 'cpu_only'){ if($min[$i] -le 6){ $m='' } else { $m='[ likely too slow without a GPU ]' } } elseif($v -ge $min[$i]){ $m='' } else { $m='[ needs ~' + $min[$i] + ' GB VRAM - will be slow ]' }; 'MK_' + $i + '=' + $m }" > "%~dp0.hw-parsed.env" 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; try { $h = ConvertFrom-Json (Get-Content -Raw '%~dp0hardware.json') } catch { $h = $null }; $min=@{1=6;2=4;3=8;4=8;5=16;6=18;7=10;8=12;9=8;10=24}; if (-not $h) { 'HW_OK=0'; 'REC=0'; 'HW_TIER=unknown'; 'HW_VRAM=0'; 'HW_RAM=0'; 'HW_DISK=0'; foreach($i in 1..10){ 'MK_' + $i + '=' }; exit }; $v=[int]$h.gpu.vram_gb; $t=[string]$h.recommended_tier; $ram=[int]$h.ram_gb; $disk=[int]$h.disk.free_gb; $rec=0; if($t -eq 'cpu_only'){ $rec=2 } elseif($v -ge 16){ $rec=5 } elseif($v -ge 12){ $rec=8 } elseif($v -ge 8){ $rec=4 } elseif($v -ge 6){ $rec=1 } else { $rec=2 }; 'HW_OK=1'; 'HW_TIER=' + $t; 'HW_VRAM=' + $v; 'HW_RAM=' + $ram; 'HW_DISK=' + $disk; 'REC=' + $rec; foreach($i in 1..10){ if($i -eq $rec){ $m='[ RECOMMENDED FOR YOUR PC ]' } elseif($t -eq 'cpu_only'){ if($min[$i] -le 6){ $m='' } else { $m='[ likely too slow without a GPU ]' } } elseif($v -ge $min[$i]){ $m='' } else { $m='[ needs ~' + $min[$i] + ' GB VRAM - will be slow ]' }; 'MK_' + $i + '=' + $m }" > "%~dp0.hw-parsed.env" 2>nul
 
 if exist "%~dp0.hw-parsed.env" (
     for /f "usebackq tokens=1,* delims==" %%K in ("%~dp0.hw-parsed.env") do set "%%K=%%L"
@@ -592,51 +605,51 @@ echo   VRAM estimates are approximate at default CTX_SIZE.
 echo   Adjust CTX_SIZE and KV_CACHE_TYPE at the top of
 echo   this script to trade context length vs VRAM usage.
 echo.
-echo   ── SMALL (fits ~8 GB VRAM) ──────────────────────
+echo   -- SMALL (fits ~8 GB VRAM) ----------------------
 echo.
 echo     [1] Gemma 3 4B IT          Q8_0  ~4.7 GB  !MK_1!
-echo         Google — fast and sharp for its size
+echo         Google - fast and sharp for its size
 echo.
 echo     [2] Llama 3.2 3B Instruct  Q8_0  ~3.3 GB  !MK_2!
-echo         Meta — ultra-light, surprisingly good chat
+echo         Meta - ultra-light, surprisingly good chat
 echo.
-echo   ── MEDIUM (fits ~10-12 GB VRAM) ─────────────────
+echo   -- MEDIUM (fits ~10-12 GB VRAM) -----------------
 echo.
-echo     [3] Llama 3.1 8B Instruct  Q6_K  ~6.1 GB  !MK_3!
-echo         Meta — solid all-rounder, 128K context
+echo     [3] Mistral 7B v0.3        Q6_K  ~5.8 GB  !MK_3!
+echo         Mistral AI - tight instruction following
 echo.
-echo     [4] Command R 7B (12-2024) Q6_K  ~6.6 GB  !MK_4!
-echo         Cohere — strong instruction following, 128K
+echo     [4] Llama 3.1 8B Instruct  Q6_K  ~6.1 GB  !MK_4!
+echo         Meta - solid all-rounder, 128K context
+echo.
+echo     [9] Command R 7B (12-2024) Q6_K  ~6.6 GB  !MK_9!
+echo         Cohere - strong instruction following, 128K
 echo         Multilingual; no chain-of-thought
 echo.
-echo     [5] Granite 3.0 8B Instr.  Q6_K  ~6.6 GB  !MK_5!
-echo         IBM — clean, reliable general chat, 128K
+echo   -- LARGE (fits ~16 GB VRAM) ---------------------
 echo.
-echo     [6] GLM-Z1 9B (0414)       Q4_K_M ~5.8 GB  !MK_6!
-echo         Zhipu/THUDM — reasoning, strong at math
+echo     [5] Gemma 4 26B-A4B MoE    Q4_K_S  ~16 GB  !MK_5!
+echo         Google - MoE runs FAST despite large size
+echo         Great default for 16 GB GPUs
+echo.
+echo     [6] Qwen3 30B-A3B MoE      Q4_K_M  ~18 GB  !MK_6!
+echo         Alibaba - strong reasoning, 128K context
 echo         Emits chain-of-thought between ^<think^> tags
 echo.
-echo     [7] DeepSeek-R1 8B         Q8_0   ~8.5 GB  !MK_7!
+echo     [7] DeepSeek-R1 8B         Q8_0    ~8.5 GB  !MK_7!
 echo         Reasoning-focused model (Qwen3 distill)
 echo         Shows chain-of-thought by default
 echo.
-echo   ── LARGE (fits ~16 GB VRAM) ─────────────────────
-echo.
-echo     [8] Gemma 4 26B-A4B MoE    Q4_K_S ~16 GB   !MK_8!
-echo         Google — MoE runs FAST despite large size
-echo         Great default for 16 GB GPUs
-echo.
-echo     [9] Cydonia 24B v4.1       IQ4_XS ~12.8 GB !MK_9!
-echo         TheDrummer — Mistral Small 24B finetune
-echo         Creative/roleplay focus; v7-tekken template
+echo     [8] gpt-oss 20B            MXFP4   ~12 GB  !MK_8!
+echo         OpenAI - open-weights reasoning model
+echo         Uses Harmony channel format for CoT
 echo.
 echo    [10] Command R 35B (08-2024) Q4_K_S ~20 GB  !MK_10!
-echo         Cohere — heavy chat model, needs ~24 GB VRAM
+echo         Cohere - heavy chat model, needs ~24 GB VRAM
 echo         Multilingual strength, 128K context
 echo.
-echo   ── MANUAL ───────────────────────────────────────
+echo   -- MANUAL ---------------------------------------
 echo.
-echo    [11] Skip — I'll add my own .gguf
+echo    [11] Skip - I'll add my own .gguf
 echo         Place any GGUF in the models\ folder
 echo.
 echo   Note: If a download link fails, check the updated
@@ -661,16 +674,14 @@ if "!MODEL_CHOICE!"=="1" set "PICK_MIN=6"
 if "!MODEL_CHOICE!"=="2" set "PICK_MIN=4"
 if "!MODEL_CHOICE!"=="3" set "PICK_MIN=8"
 if "!MODEL_CHOICE!"=="4" set "PICK_MIN=8"
-if "!MODEL_CHOICE!"=="5" set "PICK_MIN=8"
-if "!MODEL_CHOICE!"=="6" set "PICK_MIN=8"
+if "!MODEL_CHOICE!"=="5" set "PICK_MIN=16"
+if "!MODEL_CHOICE!"=="6" set "PICK_MIN=18"
 if "!MODEL_CHOICE!"=="7" set "PICK_MIN=10"
-if "!MODEL_CHOICE!"=="8" set "PICK_MIN=16"
-if "!MODEL_CHOICE!"=="9" set "PICK_MIN=16"
-if "!MODEL_CHOICE!"=="10" set "PICK_MIN=24"
+if "!MODEL_CHOICE!"=="8" set "PICK_MIN=12"
 if not defined HW_VRAM set "HW_VRAM=0"
 if !HW_VRAM! gtr 0 if !PICK_MIN! gtr 0 if !HW_VRAM! lss !PICK_MIN! (
     echo.
-    echo  [!!] Heads up: this model wants about !PICK_MIN! GB of GPU
+    echo  [*] Heads up: this model wants about !PICK_MIN! GB of GPU
     echo       memory, but only !HW_VRAM! GB was detected. It can still
     echo       run by spilling into system RAM, but expect it to be
     echo       noticeably slower than a model that fits your GPU.
@@ -705,6 +716,18 @@ if "!MODEL_CHOICE!"=="2" (
     goto :download_model
 )
 if "!MODEL_CHOICE!"=="3" (
+    set "DL_REPO=bartowski/Mistral-7B-Instruct-v0.3-GGUF"
+    set "DL_FILE=Mistral-7B-Instruct-v0.3-Q6_K.gguf"
+    set "MODEL_ID=mistral-7b"
+    set "MODEL_DISPLAY=Mistral 7B v0.3"
+    set "MODEL_FAMILY=mistral"
+    set "MODEL_MAX_CTX=32768"
+    set "MODEL_THINK_FMT=none"
+    set "CTX_SIZE=16384"
+    set "KV_CACHE_TYPE=f16"
+    goto :download_model
+)
+if "!MODEL_CHOICE!"=="4" (
     set "DL_REPO=bartowski/Meta-Llama-3.1-8B-Instruct-GGUF"
     set "DL_FILE=Meta-Llama-3.1-8B-Instruct-Q6_K.gguf"
     set "MODEL_ID=llama31-8b"
@@ -716,37 +739,25 @@ if "!MODEL_CHOICE!"=="3" (
     set "KV_CACHE_TYPE=q8_0"
     goto :download_model
 )
-if "!MODEL_CHOICE!"=="4" (
-    set "DL_REPO=bartowski/c4ai-command-r7b-12-2024-GGUF"
-    set "DL_FILE=c4ai-command-r7b-12-2024-Q6_K.gguf"
-    set "MODEL_ID=command-r7b"
-    set "MODEL_DISPLAY=Command R 7B (12-2024)"
-    set "MODEL_FAMILY=cohere"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=none"
-    set "CTX_SIZE=32768"
-    set "KV_CACHE_TYPE=q8_0"
-    goto :download_model
-)
 if "!MODEL_CHOICE!"=="5" (
-    set "DL_REPO=bartowski/granite-3.0-8b-instruct-GGUF"
-    set "DL_FILE=granite-3.0-8b-instruct-Q6_K.gguf"
-    set "MODEL_ID=granite-8b"
-    set "MODEL_DISPLAY=Granite 3.0 8B Instruct"
-    set "MODEL_FAMILY=granite"
-    set "MODEL_MAX_CTX=131072"
-    set "MODEL_THINK_FMT=none"
-    set "CTX_SIZE=32768"
+    set "DL_REPO=bartowski/google_gemma-4-26B-A4B-it-GGUF"
+    set "DL_FILE=google_gemma-4-26B-A4B-it-Q4_K_S.gguf"
+    set "MODEL_ID=gemma4-26b"
+    set "MODEL_DISPLAY=Gemma 4 26B-A4B MoE"
+    set "MODEL_FAMILY=gemma"
+    set "MODEL_MAX_CTX=262144"
+    set "MODEL_THINK_FMT=gemma"
+    set "CTX_SIZE=16384"
     set "KV_CACHE_TYPE=q8_0"
     goto :download_model
 )
 if "!MODEL_CHOICE!"=="6" (
-    set "DL_REPO=bartowski/THUDM_GLM-Z1-9B-0414-GGUF"
-    set "DL_FILE=THUDM_GLM-Z1-9B-0414-Q4_K_M.gguf"
-    set "MODEL_ID=glm-z1-9b"
-    set "MODEL_DISPLAY=GLM-Z1 9B (0414)"
-    set "MODEL_FAMILY=glm"
-    set "MODEL_MAX_CTX=32768"
+    set "DL_REPO=bartowski/Qwen_Qwen3-30B-A3B-GGUF"
+    set "DL_FILE=Qwen_Qwen3-30B-A3B-Q4_K_M.gguf"
+    set "MODEL_ID=qwen3-30b"
+    set "MODEL_DISPLAY=Qwen3 30B-A3B MoE"
+    set "MODEL_FAMILY=qwen"
+    set "MODEL_MAX_CTX=131072"
     set "MODEL_THINK_FMT=deepseek"
     set "CTX_SIZE=16384"
     set "KV_CACHE_TYPE=q8_0"
@@ -765,26 +776,26 @@ if "!MODEL_CHOICE!"=="7" (
     goto :download_model
 )
 if "!MODEL_CHOICE!"=="8" (
-    set "DL_REPO=bartowski/google_gemma-4-26B-A4B-it-GGUF"
-    set "DL_FILE=google_gemma-4-26B-A4B-it-Q4_K_S.gguf"
-    set "MODEL_ID=gemma4-26b"
-    set "MODEL_DISPLAY=Gemma 4 26B-A4B MoE"
-    set "MODEL_FAMILY=gemma"
-    set "MODEL_MAX_CTX=262144"
-    set "MODEL_THINK_FMT=gemma"
+    set "DL_REPO=ggml-org/gpt-oss-20b-GGUF"
+    set "DL_FILE=gpt-oss-20b-mxfp4.gguf"
+    set "MODEL_ID=gpt-oss-20b"
+    set "MODEL_DISPLAY=gpt-oss 20B"
+    set "MODEL_FAMILY=gpt-oss"
+    set "MODEL_MAX_CTX=131072"
+    set "MODEL_THINK_FMT=harmony"
     set "CTX_SIZE=16384"
     set "KV_CACHE_TYPE=q8_0"
     goto :download_model
 )
 if "!MODEL_CHOICE!"=="9" (
-    set "DL_REPO=bartowski/TheDrummer_Cydonia-24B-v4.1-GGUF"
-    set "DL_FILE=TheDrummer_Cydonia-24B-v4.1-IQ4_XS.gguf"
-    set "MODEL_ID=cydonia-24b"
-    set "MODEL_DISPLAY=Cydonia 24B v4.1"
-    set "MODEL_FAMILY=mistral"
+    set "DL_REPO=bartowski/c4ai-command-r7b-12-2024-GGUF"
+    set "DL_FILE=c4ai-command-r7b-12-2024-Q6_K.gguf"
+    set "MODEL_ID=command-r7b"
+    set "MODEL_DISPLAY=Command R 7B (12-2024)"
+    set "MODEL_FAMILY=cohere"
     set "MODEL_MAX_CTX=131072"
     set "MODEL_THINK_FMT=none"
-    set "CTX_SIZE=16384"
+    set "CTX_SIZE=32768"
     set "KV_CACHE_TYPE=q8_0"
     goto :download_model
 )
@@ -895,7 +906,7 @@ if "!VERIFY_RESULT!"=="1" (
     goto :fatal
 )
 
-:: Sanity check — file should be at least 1 GB
+:: Sanity check - file should be at least 1 GB
 for %%A in ("!GGUF_PATH!") do set "FSIZE=%%~zA"
 if !FSIZE! LSS 1000000000 (
     echo  [ERROR] Downloaded file is too small - !FSIZE! bytes.
@@ -912,8 +923,13 @@ if !FSIZE! LSS 1000000000 (
 echo  [OK] Model downloaded: !DL_FILE!
 echo.
 
-:: Fall through to write_model_json (GGUF_BASENAME not set for downloads — set it now)
-for %%F in ("!GGUF_PATH!") do set "GGUF_BASENAME=%%~nxF"
+:: A just-downloaded model must be identified exactly like an existing
+:: one, so MODEL_* settings (context, jinja mode, chat template, thinking
+:: format) get populated. Skipping this was why a freshly downloaded model
+:: launched with empty settings and stalled on the first run, while a
+:: restart -- which DOES identify the model -- worked. :identify_model sets
+:: GGUF_BASENAME from GGUF_PATH and returns via :write_model_json.
+goto :identify_model
 
 :: ---------------------------------------------------------------
 :: WRITE ACTIVE-MODEL.JSON
@@ -960,11 +976,11 @@ set "ACTIVE_GGUF_NAME=!GGUF_BASENAME!"
 if exist "%~dp0identify-model.ps1" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0identify-model.ps1" -ModelsDir "!MODEL_DIR!" -Active "!ACTIVE_GGUF_NAME!" -OutFile "!MODELS_LIST_JSON!"
 ) else (
-    echo  [!!] identify-model.ps1 not found; cannot build models-list.json.
+    echo  [*] identify-model.ps1 not found; cannot build models-list.json.
 )
 
 if errorlevel 1 (
-    echo  [!!] models-list.json write failed; header dropdown will be empty.
+    echo  [*] models-list.json write failed; header dropdown will be empty.
     echo       Hot-swap requires this file -- check that PowerShell can run.
 )
 echo.
@@ -981,7 +997,7 @@ if not errorlevel 1 (
     goto :verify_gpu
 )
 
-:: Log file for diagnostics — lives next to this script
+:: Log file for diagnostics - lives next to this script
 echo  [..] Starting llama-server...
 echo       Model:      !GGUF_PATH!
 echo       Port:       !SERVER_PORT!
@@ -1020,7 +1036,7 @@ echo.
 ::
 :: For a handful of families, --jinja produces garbage because the embedded
 :: template is incomplete or contains Jinja constructs that minja can't
-:: render. Mistral Nemo merges are the canonical example — see the comment
+:: render. Mistral Nemo merges are the canonical example - see the comment
 :: at the top of this script. For those, :identify_model sets:
 ::   MODEL_USE_JINJA=0
 ::   MODEL_CHAT_TEMPLATE=<built-in template name, e.g. mistral-v3-tekken>
@@ -1030,10 +1046,10 @@ echo.
 :: Important: we ONLY pass --chat-template when MODEL_CHAT_TEMPLATE names a
 :: built-in. Passing an arbitrary template name silently falls back to a
 :: wrong format and causes the model to echo system info instead of
-:: chatting — that's the footgun the old comment here was guarding against.
+:: chatting - that's the footgun the old comment here was guarding against.
 
 :: --parallel 1 pins the server to a single slot. The default ('auto'
-:: → 4 slots) splits the unified KV cache four ways and causes the
+:: -> 4 slots) splits the unified KV cache four ways and causes the
 :: server to bounce between slots via LRU/LCP selection. With two
 :: differently-shaped requests in flight (e.g. lore summarization +
 :: chat completion), slot churn invalidates cached prefixes on both
@@ -1091,7 +1107,7 @@ if not "!MODEL_CHAT_TEMPLATE_FILE!"=="" (
     if exist "!TEMPLATE_FILE_PATH!" (
         findstr /c:"{%%" /c:"{{" "!TEMPLATE_FILE_PATH!" >nul 2>&1
         if errorlevel 1 (
-            echo  [!!] Template file has no Jinja markers ^(empty / failed download?^): !MODEL_CHAT_TEMPLATE_FILE!
+            echo  [*] Template file has no Jinja markers ^(empty / failed download?^): !MODEL_CHAT_TEMPLATE_FILE!
             echo       Ignoring it and using the embedded template instead.
             set "MODEL_CHAT_TEMPLATE_FILE="
         )
@@ -1110,7 +1126,7 @@ if not "!MODEL_CHAT_TEMPLATE_FILE!"=="" (
         rem (no outer quotes) so the quotes belong to the value itself.
         set CHAT_TEMPLATE_FLAG=--chat-template-file "!TEMPLATE_FILE_PATH!"
     ) else (
-        echo  [!!] Chat-template file not found: !TEMPLATE_FILE_PATH!
+        echo  [*] Chat-template file not found: !TEMPLATE_FILE_PATH!
         echo       Falling back to embedded template via --jinja.
         set "JINJA_FLAG=--jinja"
     )
@@ -1135,21 +1151,41 @@ if not "!MODEL_CHAT_TEMPLATE_FILE!"=="" (
 start /min "llama-server" "!LAUNCH_SCRIPT!"
 
 echo  [..] Waiting for server to load model...
-echo       (First launch may take 30-60 seconds while the
-echo        model loads into VRAM. Subsequent starts are faster.)
+echo       The first launch on a NEW PC can take several minutes while
+echo       your GPU compiles its shaders. Later starts are much faster.
+echo       (If the server process stops, we halt and show the log.)
 echo.
 
 set "RETRIES=0"
 :wait_loop
 set /a RETRIES+=1
-if !RETRIES! gtr 60 (
+:: Fast-fail: if the server process has exited, it crashed during load
+:: (model too big for VRAM/RAM, or an incompatible GGUF). Don't make the
+:: user wait out the full timeout for a server that is already gone.
+:: (Skip the first few polls so we don't race the process appearing.)
+if !RETRIES! lss 3 goto :wait_poll
+tasklist /fi "imagename eq llama-server.exe" 2>nul | findstr /i "llama-server.exe" >nul
+if errorlevel 1 (
     echo.
-    echo  [ERROR] llama-server didn't respond within 2 minutes.
-    echo         Check if the model is too large for your VRAM.
-    echo         Try a smaller model, or reduce GPU_LAYERS in this script.
+    echo  [ERROR] llama-server stopped during startup -- it could not load the model.
+    echo         Most often the model is too large for your VRAM/RAM, or the GGUF
+    echo         is incompatible with this llama.cpp build. Try a smaller model.
     echo.
-    echo  [LOG] Last 20 lines of server log:
-    powershell -NoProfile -Command "Get-Content '!LOG_FILE!' -Tail 20" 2>nul
+    echo  [LOG] Server log:  !LOG_FILE!
+    if exist "!LOG_FILE!" type "!LOG_FILE!"
+    goto :fatal
+)
+:wait_poll
+:: Patient cap for a genuine first load: 300 polls x 2s = ~10 minutes,
+:: enough for first-ever Vulkan shader compilation on a new machine.
+if !RETRIES! gtr 300 (
+    echo.
+    echo  [ERROR] llama-server did not become ready within ~10 minutes.
+    echo         The model may be too large for your hardware. Try a smaller model,
+    echo         or reduce GPU_LAYERS in this script.
+    echo.
+    echo  [LOG] Server log:  !LOG_FILE!
+    if exist "!LOG_FILE!" type "!LOG_FILE!"
     goto :fatal
 )
 timeout /t 2 /nobreak >nul
@@ -1180,7 +1216,7 @@ if "!GPU_CONFIRMED!"=="1" (
     echo  [OK] GPU acceleration detected
 ) else (
     echo.
-    echo  [!!] WARNING: Could not confirm GPU acceleration.
+    echo  [*] WARNING: Could not confirm GPU acceleration.
     echo       The model may be running on CPU, which is VERY slow.
     echo.
     echo       Possible causes:
@@ -1210,7 +1246,7 @@ if exist "!LOG_FILE!" (
     findstr /i /c:"cannot meet free memory" /c:"failed to fit" "!LOG_FILE!" >nul 2>&1
     if not errorlevel 1 (
         echo.
-        echo  [!!] VRAM WARNING: Model is tight on your GPU memory.
+        echo  [*] VRAM WARNING: Model is tight on your GPU memory.
         echo       If you get 500 errors during chat, try:
         echo         - Reduce CTX_SIZE at the top of this script
         echo         - Use a smaller model or quantization
@@ -1243,7 +1279,7 @@ set "PRETRIES=0"
 :proxy_wait
 set /a PRETRIES+=1
 if !PRETRIES! gtr 10 (
-    echo  [!!] Search proxy failed. Web search will not work.
+    echo  [*] Search proxy failed. Web search will not work.
     echo      Chat still functions normally without search.
     goto :launch
 )
@@ -1302,7 +1338,7 @@ set "FRETRIES=0"
 :fserver_wait
 set /a FRETRIES+=1
 if !FRETRIES! gtr 8 (
-    echo  [!!] File server failed to start. Phone access will not work.
+    echo  [*] File server failed to start. Phone access will not work.
     echo      You may need to run setup-lan.bat as Administrator first.
     echo      Desktop chat still works normally.
     goto :get_lan_ip
@@ -1319,7 +1355,6 @@ echo  [OK] File server on :8080
 :: Detect the local network IP so we can show the phone URL
 for /f "tokens=2 delims=:" %%A in ('ipconfig ^| findstr /i "IPv4" ^| findstr /v "127.0.0.1"') do (
     set "LAN_IP=%%A"
-    :: Trim leading space
     for /f "tokens=* delims= " %%B in ("!LAN_IP!") do set "LAN_IP=%%B"
     goto :got_ip
 )
@@ -1332,7 +1367,7 @@ set "LAN_IP=<could not detect>"
 :: Windows 10 (1703+) and Windows 11 automatically advertise the
 :: PC's name on the local network via mDNS through the dnscache
 :: service. Modern Android (Nov 2021+) and iOS resolve <name>.local
-:: in browsers natively — no app or config needed on the phone.
+:: in browsers natively - no app or config needed on the phone.
 ::
 :: The hostname URL is preferred because it's STABLE across IP
 :: rotations: the browser keys localStorage by origin, and the
@@ -1347,7 +1382,7 @@ set "LAN_HOST=!COMPUTERNAME!"
 for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "$env:COMPUTERNAME.ToLower()" 2^>nul`) do set "LAN_HOST=%%A"
 if not defined LAN_HOST set "LAN_HOST=!COMPUTERNAME!"
 
-:: Quick reachability check — does this PC respond to its own .local name?
+:: Quick reachability check - does this PC respond to its own .local name?
 :: If yes, mDNS is working and other devices on the LAN should reach us
 :: at <LAN_HOST>.local. If no, fall back to recommending the IP URL only.
 set "MDNS_OK=0"
@@ -1360,7 +1395,7 @@ if not errorlevel 1 set "MDNS_OK=1"
 :: Each LAN IP is a separate browser origin. When this PC's IP
 :: rotates between launches, the phone's localStorage at the OLD IP
 :: stays put (and unreachable), and the phone bookmark needs to be
-:: updated. Without a warning, users think their chats vanished —
+:: updated. Without a warning, users think their chats vanished -
 :: they didn't, the new origin just has its own (empty) localStorage.
 ::
 :: Also: chat.html now mirrors state to the file server's /state
@@ -1394,18 +1429,18 @@ echo  ====================================================
 echo   Ready! Opening chat in your browser.
 echo.
 if "!IP_CHANGED!"=="1" (
-    echo   [!] LAN IP CHANGED since last launch!
+    echo   [*] LAN IP CHANGED since last launch!
     echo       Previous: http://!PREV_LAN_IP!:8080
     echo       Current:  http://!LAN_IP!:8080
     echo.
     if "!MDNS_OK!"=="1" (
         echo       TIP: Bookmark http://!LAN_HOST!.local:8080
-        echo       on your phone instead — that URL stays the
+        echo       on your phone instead - that URL stays the
         echo       same even when the IP rotates.
     ) else (
         echo       Update your phone's bookmark to the NEW URL.
     )
-    echo       Your chats are safe — the chat app will offer
+    echo       Your chats are safe - the chat app will offer
     echo       to restore them automatically on first load.
     echo.
 )
@@ -1421,14 +1456,14 @@ if "!MDNS_OK!"=="1" (
     echo     On your phone: http://!LAN_HOST!.local:8080  [stable, recommended]
     echo                or  http://!LAN_IP!:8080          [also works]
     echo.
-    echo     The .local URL is preferred — it survives IP changes,
+    echo     The .local URL is preferred - it survives IP changes,
     echo     so your bookmarks never break. Works on Android 12+
     echo     and any iPhone or iPad without extra setup.
 ) else (
     echo     On your phone: http://!LAN_IP!:8080
     echo.
-    echo     [!] mDNS not responding on this PC. The .local
-    echo         hostname can't be used until that's fixed —
+    echo     [*] mDNS not responding on this PC. The .local
+    echo         hostname can't be used until that's fixed -
     echo         see TROUBLESHOOTING.md or run setup-lan.bat
     echo         as Administrator to open UDP 5353.
 )
@@ -1489,10 +1524,10 @@ if exist "!SWAP_LOCK!" (
     goto :monitor_loop
 )
 
-:: ---- Server is down — restart it ----
+:: ---- Server is down - restart it ----
 call :restore_window
 echo.
-echo  [!!] %TIME% — llama-server stopped responding!
+echo  [*] %TIME% - llama-server stopped responding!
 echo  [..] Killing any stale llama-server process...
 taskkill /f /im llama-server.exe >nul 2>&1
 timeout /t 3 /nobreak >nul
@@ -1506,7 +1541,7 @@ set "RRETRIES=0"
 set /a RRETRIES+=1
 if !RRETRIES! gtr 90 (
     echo.
-    echo  [!!] %TIME% — Server did not restart within 3 minutes.
+    echo  [*] %TIME% - Server did not restart within 3 minutes.
     echo       Check the log file for errors:
     echo         !LOG_FILE!
     echo  [LOG] Last 10 lines:
@@ -1521,7 +1556,7 @@ curl.exe -s http://127.0.0.1:!SERVER_PORT!/health 2>nul | findstr /i "ok" >nul 2
 if errorlevel 1 goto :restart_wait
 
 echo.
-echo  [OK] %TIME% — llama-server restarted successfully!
+echo  [OK] %TIME% - llama-server restarted successfully!
 timeout /t 5 /nobreak >nul
 call :minimize_window
 goto :monitor_loop
