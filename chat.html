@@ -4731,39 +4731,48 @@ function normalizeMessagesForStrictTemplates(messages) {
     if (working[i].content) leadingSystem.push(working[i].content);
     i++;
   }
-  // Leading assistant message(s) — almost always the character's opening
-  // greeting, which injectGreeting() stamps onto the thread at messages[0] as
-  // an assistant turn (and, far more rarely, an old AI reply left orphaned at
-  // the front by the token-trim safety net above). Strict templates (Mistral
-  // Nemo et al.) forbid the array from opening on an assistant turn, so these
-  // can't be kept in place. The OLD behavior simply skipped — i.e. deleted —
-  // them, which silently dropped the greeting from the model's context: the
-  // scene-setting opening that's meant to prime the whole conversation never
-  // actually reached the model. Instead we PRESERVE that text by folding it
-  // into the leading system block as a labeled opening, so it still sets the
-  // scene while the array safely starts system -> user. Empty / whitespace
-  // assistant turns (e.g. a greeting slot blanked for an in-flight reroll)
-  // carry no content and are skipped, so nothing spurious is injected.
+  // Leading assistant message(s) — the character's opening greeting, stamped
+  // by injectGreeting() at messages[0] as an assistant turn (or, rarely, an
+  // old reply orphaned at the front by the trim safety net). Rather than bury
+  // it in the system block (the old behavior), we weave it back as a PROPER
+  // turn pair: a minimal user anchor followed by the assistant greeting. That
+  // keeps the greeting an in-character assistant turn for every template —
+  // strict ones (Mistral Nemo et al.) can't open on an assistant turn, so the
+  // user anchor is what makes the opening legal — while still giving it a real
+  // user-side context. Empty / whitespace greeting slots (e.g. blanked for an
+  // in-flight reroll) carry no content and are skipped.
   const leadingAssistant = [];
   while (i < working.length && working[i].role === 'assistant') {
     const c = (working[i].content || '').trim();
     if (c) leadingAssistant.push(working[i].content);
     i++;
   }
-  if (leadingAssistant.length) {
-    leadingSystem.push('[Opening message — the start of this conversation]\n' + leadingAssistant.join('\n\n'));
-  }
+  const greetingText = leadingAssistant.length ? leadingAssistant.join('\n\n') : '';
+  // The greeting's anchor is itself a user-role message, so for fold models it
+  // can double as the carrier for the deferred system block.
+  const haveUserTarget = !!greetingText || !!working.find(m => m.role === 'user');
 
   const out = [];
   let pendingSystem = '';
 
   if (leadingSystem.length) {
-    if (foldLeadingSystem && working.find(m => m.role === 'user')) {
-      // Defer system prompt to prepend it to the first user message
+    if (foldLeadingSystem && haveUserTarget) {
+      // Defer the system block onto the first user-role message — the greeting
+      // anchor if present, otherwise the first real user turn.
       pendingSystem = leadingSystem.join('\n\n');
     } else {
       out.push({ role: 'system', content: leadingSystem.join('\n\n') });
     }
+  }
+
+  // Weave the opening greeting as [user anchor] -> [assistant greeting]. The
+  // anchor is a minimal cue so the array can legally open user-first; on fold
+  // models it also carries the deferred system block.
+  if (greetingText) {
+    let anchor = '[Start of conversation]';
+    if (pendingSystem) { anchor = pendingSystem + '\n\n' + anchor; pendingSystem = ''; }
+    out.push({ role: 'user', content: anchor });
+    out.push({ role: 'assistant', content: greetingText });
   }
 
   for (; i < working.length; i++) {
@@ -5486,25 +5495,30 @@ async function buildContextMessages(thread, card, opts) {
   const responseReserve = Math.floor(budget * RESPONSE_RESERVE_FACTOR);
   const effectiveBudget = budget - responseReserve;
 
-  // Fixed overhead
-  const systemTokens = estimateTokens(card.writingStyle) + 4;
-  let usedTokens = systemTokens;
+  // ---- Fixed (per-build) context overhead ----
+  // Writing style is the primary behavioural directive. It is emitted as
+  // the LAST system block (see assembly below) so it lands freshest under
+  // recency-weighted templates, but its token cost is fixed regardless.
+  const writingStyleTokens = estimateTokens(card.writingStyle) + 4;
 
-  // Personality reminder. Counted across ALL user messages (including
-  // archived) so the cadence is stable across compressions.
+  // Personality is now a PERSISTENT block (position 2), established on every
+  // turn rather than re-injected on a cadence. Counted whenever present.
+  const personalityText = (card.personality || '').trim();
+  const personalityTokens = personalityText ? estimateTokens(personalityText) + 4 : 0;
+
+  // Authored world/setting lore (card.startingLore): small, always-on,
+  // pulled FRESH from the card each build and emitted as the position-1
+  // block. Kept distinct from the running conversation summary below — the
+  // two are no longer blended into a single field.
+  const authoredLore = (card.loreEnabled && card.startingLore) ? card.startingLore.trim() : '';
+  const authoredLoreTokens = authoredLore ? estimateTokens(authoredLore) + 4 : 0;
+
+  // Persona injection (USER info). The cadence is unchanged; only its
+  // POSITION moves — it now lands LAST, immediately before the final user
+  // message, because the model weights the tail of the prompt most. Anchored
+  // on user message 1 too so the model knows who it's talking to from turn 1.
+  // injectionFrequency === 0 disables injection (name/colors still apply).
   const totalUserMsgs = thread.messages.filter(m => m.role === 'user').length;
-  const freq = state.settings.reminderFrequency;
-  const needsReminder = freq > 0 && totalUserMsgs > 1 && totalUserMsgs % freq === 0 && card.personality.trim();
-  const reminderTokens = needsReminder ? estimateTokens(card.personality) + 4 : 0;
-  usedTokens += reminderTokens;
-
-  // Persona injection. Mirrors the personality-reminder cadence pattern
-  // but is anchored on user message 1 too — the model needs to know who
-  // it's talking to from the very first turn, not the Nth. After that it
-  // gets re-injected every injectionFrequency user messages as a refresher.
-  //
-  // injectionFrequency === 0 disables injection entirely (the persona's
-  // name/avatar/colors still apply, but the description is never shared).
   const personaForBuild = getActivePersona();
   const personaFreq = (typeof personaForBuild.injectionFrequency === 'number')
     ? personaForBuild.injectionFrequency
@@ -5518,12 +5532,14 @@ async function buildContextMessages(thread, card, opts) {
     ? `[Persona: ${personaForBuild.name || 'Anonymous'}]\n${personaDesc}`
     : '';
   const personaTokens = needsPersonaInject ? estimateTokens(personaPromptText) + 4 : 0;
-  usedTokens += personaTokens;
 
-  // Existing lore from prior compression passes
-  let lore = getThreadLore(thread);
-  const loreTokens = (lore && card.loreEnabled) ? estimateTokens(lore) + 4 : 0;
-  usedTokens += loreTokens;
+  // Running conversation summary (thread.lore — now summary-ONLY; authored
+  // lore is never folded in). Emitted as the position-3 block.
+  let summary = getThreadLore(thread);
+  const summaryTokens = (summary && card.loreEnabled) ? estimateTokens(summary) + 4 : 0;
+
+  let usedTokens = writingStyleTokens + personalityTokens + authoredLoreTokens
+                 + personaTokens + summaryTokens;
 
   // Live (non-archived) messages — what we'd send if no compression
   // happened this turn. Pre-compute per-message token costs so we can
@@ -5546,10 +5562,11 @@ async function buildContextMessages(thread, card, opts) {
     // How many tokens do we want to free? Aim to land at TARGET_FACTOR
     // of budget. Reserve some headroom for the lore that's about to
     // grow, so we don't immediately bounce back over the line.
-    const loreReserve  = Math.max(loreTokens, 1024);
-    const targetTotal  = Math.floor(budget * TARGET_FACTOR);
-    const targetLive   = Math.max(0, targetTotal - systemTokens - reminderTokens - personaTokens - loreReserve);
-    const tokensToFree = Math.max(0, liveTokens - targetLive);
+    const summaryReserve = Math.max(summaryTokens, 1024);
+    const targetTotal    = Math.floor(budget * TARGET_FACTOR);
+    const fixedOverhead  = writingStyleTokens + personalityTokens + authoredLoreTokens + personaTokens;
+    const targetLive     = Math.max(0, targetTotal - fixedOverhead - summaryReserve);
+    const tokensToFree   = Math.max(0, liveTokens - targetLive);
 
     // Walk back from the tail accumulating the trailing reserve. The
     // index `firstArchivable` is the boundary: everything BEFORE it is
@@ -5578,9 +5595,9 @@ async function buildContextMessages(thread, card, opts) {
     }
 
     if (toArchive.length > 0) {
-      // Fold the just-archived chunk into lore (combined with any prior).
-      lore = await summarizeForLore(lore, toArchive);
-      setThreadLore(thread, lore);
+      // Fold the just-archived chunk into the running summary (with any prior).
+      summary = await summarizeForLore(summary, toArchive);
+      setThreadLore(thread, summary);
 
       // Persistent marker so the user can see the compression event while
       // the post-compression COT streams in. summarizeForLore's transient
@@ -5595,8 +5612,8 @@ async function buildContextMessages(thread, card, opts) {
       // (typically smaller) lore — this is what gets returned to the
       // caller as tokensUsed so the status bar shows reality.
       liveMsgs = thread.messages.filter(m => !m.archived);
-      usedTokens = systemTokens + reminderTokens + personaTokens
-                 + (lore ? estimateTokens(lore) + 4 : 0);
+      usedTokens = writingStyleTokens + personalityTokens + authoredLoreTokens + personaTokens
+                 + (summary ? estimateTokens(summary) + 4 : 0);
       saveState();
       renderMessages();   // surface the dimming + lore divider immediately
     }
@@ -5614,22 +5631,33 @@ async function buildContextMessages(thread, card, opts) {
     recentTotal = estimateMessagesTokens(finalRecent);
   }
 
-  // Assemble: [system prompt] → [lore] → [messages with personality reminder]
-  // Lock in character/user names at call time — translateTemplates uses these
-  // instead of doing a global lookup that could race with card switching.
+  // Assemble in ascending priority — the model weights what arrives LAST, so
+  // the order is: lore -> personality -> summary -> RAG -> writing style, then
+  // the conversation, then (just before the final user turn) the response
+  // direction and the USER's persona. Lock in character/user names at call
+  // time so translateTemplates can't race with a card switch mid-build.
   const charName = card.name || 'Assistant';
-  const persona = personaForBuild;
-  const userName = persona.name || 'Anonymous';
+  const userName = personaForBuild.name || 'Anonymous';
 
   const apiMessages = [];
 
-  // Build system prompt with explicit character identity + writing style
-  let systemPrompt = `[Character: ${charName} | User: ${userName}]\n\n`;
-  systemPrompt += translateTemplates(card.writingStyle, charName, userName);
-  apiMessages.push({ role: 'system', content: systemPrompt });
+  // ---- 1. LORE (authored world/setting; fresh from the card) ----
+  if (authoredLore) {
+    apiMessages.push({ role: 'system',
+      content: '[Lore]\n' + translateTemplates(authoredLore, charName, userName) });
+  }
 
-  if (lore && card.loreEnabled) {
-    apiMessages.push({ role: 'system', content: '[Conversation Lore / Summary of earlier events]\n' + translateTemplates(lore, charName, userName) });
+  // ---- 2. PERSONALITY (+ character identity) — persistent every turn ----
+  {
+    let personalityBlock = `[Character: ${charName}]`;
+    if (personalityText) personalityBlock += '\n' + translateTemplates(personalityText, charName, userName);
+    apiMessages.push({ role: 'system', content: personalityBlock });
+  }
+
+  // ---- 3. AUTO-SUMMARY (running summary of older, archived turns) ----
+  if (summary && card.loreEnabled) {
+    apiMessages.push({ role: 'system',
+      content: '[Story so far \u2014 summary of earlier messages]\n' + translateTemplates(summary, charName, userName) });
   }
 
   // ---- RAG retrieval (Stage 1) ----
@@ -5641,12 +5669,12 @@ async function buildContextMessages(thread, card, opts) {
   // emission + warmth mutation via opts.diag.
   let retrievalTokens = 0;
   if (!opts.diag) {
-    const loreTokensNow = (lore && card.loreEnabled) ? estimateTokens(lore) + 4 : 0;
+    const summaryTokensNow = (summary && card.loreEnabled) ? estimateTokens(summary) + 4 : 0;
     const budgetSnapshot = {
       token_limit: tokenLimit,
       budget: budget,
-      system_tokens: systemTokens,
-      lore_summary_tokens: loreTokensNow,
+      system_tokens: writingStyleTokens + personalityTokens,
+      lore_summary_tokens: authoredLoreTokens + summaryTokensNow,
       live_convo_tokens: recentTotal,
       retrieval_tokens: 0,
       free_tokens: Math.max(0, budget - usedTokens - recentTotal)
@@ -5676,6 +5704,10 @@ async function buildContextMessages(thread, card, opts) {
     }
   }
 
+  // ---- 5. WRITING STYLE (primary directive) — emitted LAST among the
+  // system blocks so it sits freshest right before the conversation. ----
+  apiMessages.push({ role: 'system', content: translateTemplates(card.writingStyle, charName, userName) });
+
   // Pick a carousel line once per context build (mutates card index for sequential mode)
   const carouselLine = pickCarouselLine(card);
   if (carouselLine) {
@@ -5686,18 +5718,16 @@ async function buildContextMessages(thread, card, opts) {
   for (let i = 0; i < finalRecent.length; i++) {
     const m = finalRecent[i];
     const isLastUserMsg = m.role === 'user' && i === finalRecent.length - 1;
-    // Persona injection comes first — "who is the user" sets the stage
-    // for "how the bot should treat them" (personality reminder) and the
-    // optional carousel nudge for this turn.
-    if (needsPersonaInject && isLastUserMsg) {
-      apiMessages.push({ role: 'system', content: translateTemplates(personaPromptText, charName, userName) });
-    }
-    if (needsReminder && isLastUserMsg) {
-      apiMessages.push({ role: 'system', content: translateTemplates(card.personality, charName, userName) });
-    }
-    // Inject carousel nudge just before the final user message
+    // Just before the final user turn, in ascending priority: the optional
+    // per-response narrative nudge, then the USER's persona LAST so it sits
+    // immediately against the user message (recency = highest weight). The
+    // old periodic personality reminder is gone — personality is now a
+    // persistent block up top (position 2).
     if (carouselLine && isLastUserMsg) {
       apiMessages.push({ role: 'system', content: '[Narrative direction for this response]\n' + translateTemplates(carouselLine, charName, userName) });
+    }
+    if (needsPersonaInject && isLastUserMsg) {
+      apiMessages.push({ role: 'system', content: translateTemplates(personaPromptText, charName, userName) });
     }
     // Use content for the API. If content is empty but reasoning exists
     // (older messages from before the parser split was working), fall back
@@ -5725,7 +5755,6 @@ async function buildContextMessages(thread, card, opts) {
 
   return {
     apiMessages: finalApiMessages,
-    needsReminder,
     tokensUsed: usedTokens + recentTotal + retrievalTokens,
     budget
   };
@@ -5897,7 +5926,11 @@ function createThread() {
     id: generateId(),
     name: 'New Thread',
     messages: [],
-    lore: card.startingLore || '',
+    // thread.lore now holds ONLY the running conversation summary (built up
+    // by compression). Authored world/setting lore lives on the card
+    // (card.startingLore) and is injected fresh each build, so we no longer
+    // seed it here — that kept the two cleanly separated (see buildContextMessages).
+    lore: '',
     createdAt: Date.now(),
     pinned: false,
     folderId: null,
@@ -6286,9 +6319,7 @@ async function sendMessage(overrideContent) {
   }
 
   // Build token-aware context with lore (now includes any searchData on messages)
-  const { apiMessages, needsReminder, tokensUsed, budget } = await buildContextMessages(thread, card);
-
-  if (needsReminder) renderReminderIndicator();
+  const { apiMessages, tokensUsed, budget } = await buildContextMessages(thread, card);
 
   isGenerating = true;
   updateInputState();
@@ -8134,17 +8165,20 @@ function updateContextInfo() {
   const systemTokens = card ? estimateTokens(card.writingStyle) + 4 : 0;
   const liveTokens   = estimateMessagesTokens(liveMsgs);
 
-  const userCount = thread.messages.filter(m => m.role === 'user').length;
-  const freq = state.settings.reminderFrequency;
-  const needsReminder = card && freq > 0 && userCount > 1
-                     && userCount % freq === 0
-                     && card.personality && card.personality.trim();
-  const reminderTokens = needsReminder ? estimateTokens(card.personality) + 4 : 0;
+  // Personality is now a persistent block (counted every turn when present),
+  // not a periodic reminder. Mirror buildContextMessages.
+  const personalityText = (card && card.personality || '').trim();
+  const personalityTokens = personalityText ? estimateTokens(personalityText) + 4 : 0;
 
-  const lore = getThreadLore(thread);
-  const loreTokens = (lore && card && card.loreEnabled) ? estimateTokens(lore) + 4 : 0;
+  // Authored lore (fresh from card) and the running summary (thread.lore) are
+  // now separate blocks; count both.
+  const authoredLore = (card && card.loreEnabled && card.startingLore) ? card.startingLore.trim() : '';
+  const authoredLoreTokens = authoredLore ? estimateTokens(authoredLore) + 4 : 0;
+  const summary = getThreadLore(thread);
+  const summaryTokens = (summary && card && card.loreEnabled) ? estimateTokens(summary) + 4 : 0;
+  const loreTokens = authoredLoreTokens + summaryTokens;
 
-  const projected = systemTokens + liveTokens + reminderTokens + loreTokens;
+  const projected = systemTokens + personalityTokens + liveTokens + loreTokens;
   const budget    = Math.floor(state.settings.tokenLimit * 0.9);
   // Mirror RESPONSE_RESERVE_FACTOR from buildContextMessages — keep these
   // in sync. Showing % against `effectiveBudget` makes the readout track
@@ -8152,8 +8186,6 @@ function updateContextInfo() {
   // at ~80% and wonder why.
   const effectiveBudget = budget - Math.floor(budget * 0.20);
   const pct       = effectiveBudget > 0 ? Math.round((projected / effectiveBudget) * 100) : 0;
-
-  const nextReminder = freq > 0 ? (freq - (userCount % freq)) : '--';
 
   // Format: "~projected / effectiveBudget tok (pct%)" so the percentage
   // shows how close we are to triggering compression. Add a ⚠ marker
@@ -8163,8 +8195,7 @@ function updateContextInfo() {
   let info = archivedCount > 0
     ? `msgs: ${liveMsgs.length}/${total} | ~${projected}/${effectiveBudget} tok (${pct}%)${warn}`
     : `msgs: ${total} | ~${projected}/${effectiveBudget} tok (${pct}%)${warn}`;
-  if (loreTokens > 0) info += ` | lore: ~${loreTokens - 4}`;
-  info += ` | reminder: ${nextReminder}`;
+  if (loreTokens > 0) info += ` | lore: ~${loreTokens}`;
   el.textContent = info;
 }
 
