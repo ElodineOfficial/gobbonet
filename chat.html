@@ -329,6 +329,79 @@ input[type="range"]::-moz-range-thumb {
 /* ===== File attachment: button, pending tray, drag-drop overlay ===== */
 #chat { position: relative; } /* anchor for the drop overlay */
 
+/* ===== Follow-to-bottom FAB =====================================
+   A floating "jump to latest" control that re-engages the streaming
+   auto-scroll after the user has touched/scrolled away during
+   generation. It lives as a direct child of #chat (the positioned
+   ancestor) rather than inside #messages, because renderMessages()
+   rewrites #messages.innerHTML wholesale on every state-transition
+   render — anything parked inside would be wiped mid-stream. Its
+   vertical position is anchored to the bottom edge of the .messages
+   viewport in JS (positionFollowButton), so it floats just above the
+   input cluster regardless of textarea height or which optional bars
+   (context-info, auto-continue, attach tray) happen to be showing. */
+#follow-bottom-btn {
+  position: absolute;
+  left: 50%;
+  /* bottom is set from JS; translateY animates the show/hide rise */
+  transform: translateX(-50%) translateY(8px);
+  z-index: 6;                       /* above .input-area (z-index:5) */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 15px 0 13px;
+  border-radius: 17px;
+  background: rgba(2, 2, 5, 0.86);  /* var(--black) @ ~86% */
+  border: 1px solid var(--cyan-dim);
+  color: var(--cyan-bright);
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55), var(--glow-cyan);
+  /* hidden by default — .visible (toggled by updateFollowButton) reveals it */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--transition), transform var(--transition),
+              border-color var(--transition), box-shadow var(--transition);
+}
+#follow-bottom-btn.visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+#follow-bottom-btn:hover {
+  border-color: var(--cyan-bright);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6),
+              0 0 14px rgba(0, 243, 255, 0.5);
+}
+#follow-bottom-btn .fb-arrow {
+  font-size: 14px;
+  line-height: 1;
+  transform: translateY(1px);
+}
+/* Touch devices: bigger thumb target, arrow-only (drop the label).
+   This is where the feature primarily lives — see the touchstart
+   handler in attachScrollPinTracking(). */
+@media (pointer: coarse) {
+  #follow-bottom-btn {
+    height: 42px;
+    width: 42px;
+    padding: 0;
+    border-radius: 50%;
+    gap: 0;
+  }
+  #follow-bottom-btn .fb-arrow { font-size: 19px; transform: translateY(1px); }
+  #follow-bottom-btn .fb-label { display: none; }
+}
+
 .attach-btn {
   background: rgba(0, 243, 255, 0.05);
   border: 1px solid var(--border);
@@ -572,6 +645,18 @@ input[type="range"]::-moz-range-thumb {
       <button class="btn btn-fill" id="send-btn" onclick="sendMessage()">Send</button>
       <button class="btn" id="stop-btn" onclick="stopGeneration()" style="display:none;">Stop</button>
     </div>
+
+    <!-- Follow-to-bottom: re-engages the streaming auto-scroll after the
+         user touches/scrolls away during generation. Positioned in JS just
+         above the input cluster (positionFollowButton). It is a SIBLING of
+         #messages, not a child, because renderMessages() replaces
+         #messages.innerHTML on every render and would otherwise destroy it. -->
+    <button id="follow-bottom-btn" type="button" onclick="followToBottom()"
+            aria-label="Resume auto-scroll and jump to the latest message"
+            title="Jump to latest">
+      <span class="fb-arrow" aria-hidden="true">&#8595;</span>
+      <span class="fb-label">Follow</span>
+    </button>
 
     <!-- Drag & drop overlay — covers the chat area while a file is dragged in -->
     <div id="drop-overlay">
@@ -6213,6 +6298,10 @@ async function sendMessage(overrideContent) {
   thread.messages.push(assistantMsg);
   renderMessages();
   scrollToBottom();
+  // New stream → follow it, and clear any stale FAB left over from a
+  // previous turn the user had scrolled away from.
+  scrollPinnedToBottom = true;
+  updateFollowButton();
 
   abortController = new AbortController();
   startCotWatchdog();
@@ -6338,7 +6427,11 @@ async function sendMessage(overrideContent) {
   forceServerFlush();
   updateInputState();
   renderMessages();
-  scrollToBottom();
+  // Pin-aware: if the user is still following we land at the bottom; if they
+  // touched/scrolled away mid-stream we leave them where they're reading
+  // instead of yanking them down the moment generation ends. updateInputState
+  // above already refreshed the FAB so it stays offered in the unfollowed case.
+  autoScrollToBottom();
   updateContextInfo();
 
   // Advance the auto-continue chain if one is active. Errors (including
@@ -6784,6 +6877,9 @@ async function regenerateFromThread(options = {}) {
   }
   renderMessages();
   scrollToBottom();
+  // New stream → follow it (mirrors sendMessage).
+  scrollPinnedToBottom = true;
+  updateFollowButton();
 
   abortController = new AbortController();
   startCotWatchdog();
@@ -6860,7 +6956,7 @@ async function regenerateFromThread(options = {}) {
   forceServerFlush();   // collapse the debounce — see sendMessage for rationale
   updateInputState();
   renderMessages();
-  scrollToBottom();
+  autoScrollToBottom();   // pin-aware end-of-stream scroll (see sendMessage)
   updateContextInfo();
 }
 
@@ -8016,6 +8112,11 @@ function updateInputState() {
   // sendMessage(), so pressing Enter mid-generation simply no-ops rather than
   // interrupting. Generation is halted only via the Stop button.
   document.getElementById('msg-input').disabled = false;
+  // Reconcile the follow-to-bottom FAB on every render (thread switches,
+  // edits, deletes, generation start/end all route through here). The
+  // thread-change guard inside updateFollowButton handles the post-render
+  // scrollTop=0 transient so it never flashes on a switch.
+  updateFollowButton();
 }
 
 function updateContextInfo() {
@@ -8126,7 +8227,37 @@ function attachScrollPinTracking() {
     // small layout shifts without flipping the pin spuriously.
     const dist = container.scrollHeight - container.scrollTop - container.clientHeight;
     scrollPinnedToBottom = dist < 32;
+    updateFollowButton();
   }, { passive: true });
+
+  // Mobile-first unfollow: a direct touch on the message area during
+  // generation immediately drops auto-follow. The previous design relied
+  // solely on the scroll listener above noticing an upward scroll, but the
+  // per-chunk scrollToBottom() kept yanking the viewport back to the bottom
+  // faster than a thumb could drag the 32px clear, so stopping the auto-
+  // scroll on a phone was a fight the user usually lost. Reacting to the
+  // touch itself — before any drag distance is required — makes it crisp:
+  // one touch on the stream and it stops following, then the FAB offers a
+  // one-tap way back. Outside generation there's nothing being followed, so
+  // normal scrolling is left untouched. The listener is passive (we never
+  // preventDefault); native scrolling and text selection still work.
+  container.addEventListener('touchstart', () => {
+    if (!isGenerating || !scrollPinnedToBottom) return;
+    scrollPinnedToBottom = false;
+    // Kill any in-flight smooth auto-scroll (.messages has
+    // scroll-behavior: smooth) so the stop is instant rather than gliding
+    // to the bottom; the user's own touch scroll takes over from here.
+    const y = container.scrollTop;
+    container.style.scrollBehavior = 'auto';
+    container.scrollTop = y;
+    container.style.scrollBehavior = '';
+    updateFollowButton();
+  }, { passive: true });
+
+  // The FAB's bottom offset is measured from the live layout, so re-anchor
+  // it when the viewport changes shape (phone rotation, on-screen keyboard,
+  // window resize).
+  window.addEventListener('resize', updateFollowButton, { passive: true });
 }
 
 /** Streaming-tick page scroll. No-ops if the user has scrolled up.
@@ -8155,6 +8286,81 @@ function autoScrollCotContent(cotContent) {
   if (cotContent.dataset.userPinned === '1') {
     cotContent.scrollTop = cotContent.scrollHeight;
   }
+}
+
+/* ================================================================
+   FOLLOW-TO-BOTTOM CONTROL
+   The streaming auto-scroll (autoScrollToBottom) only chases the
+   bottom while scrollPinnedToBottom is true. On mobile the old
+   "scroll up far enough to unpin" gesture had to win a tug-of-war
+   against the per-chunk scrollToBottom(), which kept slamming the
+   viewport back to the bottom faster than a thumb could drag a row
+   clear — so stopping the auto-scroll on a phone was a fight the
+   user usually lost. Unpinning is now ALSO driven by a direct touch
+   on the message area during generation (see attachScrollPinTracking),
+   which is deterministic: one touch on the stream and following stops.
+
+   Once unpinned, fresh tokens push the latest reply below the fold.
+   This FAB then surfaces and, when tapped, re-pins and snaps to the
+   bottom so following resumes.
+================================================================ */
+
+// How far below the fold (px) before the FAB appears. Comfortably
+// larger than the 32px pin threshold so it doesn't flicker in the
+// instant the user is basically at the bottom — it shows only once a
+// real slice of content has scrolled out of view ("flooding out").
+const FOLLOW_BTN_REVEAL_DIST = 120;
+
+// Last thread the FAB reconciled against. A thread switch lands the
+// viewport at the bottom (the caller scrollToBottom()s), but
+// renderMessages() resets scrollTop to 0 synchronously first, so an
+// updateFollowButton() that runs in between (via updateInputState in
+// render()) would read "miles from bottom" and flash the button on
+// every switch. Treating an id change as freshly-pinned suppresses that.
+let _followBtnLastThreadId;
+
+/** Park the FAB at the bottom edge of the .messages viewport — i.e.
+ *  just above whatever bottom bars are currently present. #chat is the
+ *  offsetParent (position:relative) and .messages is a direct child, so
+ *  everything below messages measures as:
+ *    chat.clientHeight - (messages.offsetTop + messages.offsetHeight) */
+function positionFollowButton(btn, container) {
+  const chat = document.getElementById('chat');
+  if (!chat) return;
+  const belowMessages =
+    chat.clientHeight - (container.offsetTop + container.offsetHeight);
+  btn.style.bottom = (belowMessages + 16) + 'px';
+}
+
+/** Show/hide the FAB based on follow state + distance below the fold.
+ *  Cheap layout reads only; safe to call on every streaming tick. */
+function updateFollowButton() {
+  const btn = document.getElementById('follow-bottom-btn');
+  const container = document.getElementById('messages');
+  if (!btn || !container) return;
+
+  const thread = getActiveThread();
+  const tid = thread ? thread.id : null;
+  if (tid !== _followBtnLastThreadId) {
+    _followBtnLastThreadId = tid;
+    scrollPinnedToBottom = true;   // a fresh thread starts pinned at its end
+  }
+
+  const dist =
+    container.scrollHeight - container.scrollTop - container.clientHeight;
+  // Show only when NOT following and real content sits below the fold.
+  // While following (pinned) there's nothing to jump to.
+  const show = !!thread && !scrollPinnedToBottom && dist > FOLLOW_BTN_REVEAL_DIST;
+  if (show) positionFollowButton(btn, container);
+  btn.classList.toggle('visible', show);
+}
+
+/** FAB tap: re-engage auto-follow and snap to the latest. A live stream
+ *  resumes chasing the bottom from here; a finished one just lands there. */
+function followToBottom() {
+  scrollPinnedToBottom = true;
+  scrollToBottom();
+  updateFollowButton();   // hide now that we're pinned again
 }
 
 function goHome() {
@@ -8260,6 +8466,7 @@ function renderStreamingUpdate(assistantMsg) {
     // during reasoning, the COT-to-content transition shouldn't yank
     // them out of where they're reading.
     if (contentJustStarted) autoScrollToBottom();
+    updateFollowButton();   // reveal the FAB if content is flooding below the fold
     return;
   }
 
@@ -8294,6 +8501,10 @@ function renderStreamingUpdate(assistantMsg) {
     // user scrolled up to read earlier in the conversation.
     autoScrollToBottom();
   }
+  // While unfollowed, the viewport doesn't move, so no scroll event fires —
+  // but each chunk grows the content, pushing the latest reply further below
+  // the fold. Drive the FAB from the tick so it surfaces as that happens.
+  updateFollowButton();
 }
 
 /* ================================================================
