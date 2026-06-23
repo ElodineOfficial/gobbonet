@@ -6,6 +6,7 @@
 #      from the project root on http://+:8080/.
 #   2. Reverse-proxy /llm/*    -> http://127.0.0.1:$LlmPort     (llama-server)
 #                   /search/*  -> http://127.0.0.1:$SearchPort  (Ollama search proxy)
+#                   /embed/*   -> http://127.0.0.1:$EmbedPort   (embedding llama-server, optional)
 #   3. Persist a JSON blob at /state for cross-device state sync (GET + POST).
 #   4. Hot-swap the active GGUF without rebooting:
 #         POST /swap-model   {"file":"<name>.gguf"}  -> kicks off the swap,
@@ -22,9 +23,9 @@
 #   own kill+restart cycle, so the two never race.
 #
 # Configuration is read from environment variables set by launch.bat:
-#   GEMMA_ROOT, GEMMA_LLM_PORT, GEMMA_SEARCH_PORT, GEMMA_SERVER_EXE,
-#   GEMMA_MODEL_DIR, GEMMA_CTX_SIZE, GEMMA_GPU_LAYERS, GEMMA_KV_CACHE_TYPE,
-#   GEMMA_LOG_FILE, GEMMA_LAUNCH_SCRIPT
+#   GEMMA_ROOT, GEMMA_LLM_PORT, GEMMA_SEARCH_PORT, GEMMA_EMBED_PORT,
+#   GEMMA_SERVER_EXE, GEMMA_MODEL_DIR, GEMMA_CTX_SIZE, GEMMA_GPU_LAYERS,
+#   GEMMA_KV_CACHE_TYPE, GEMMA_LOG_FILE, GEMMA_LAUNCH_SCRIPT
 #
 # Everything is ASCII-only on purpose -- the launcher routes some output
 # through batch echo, which mangles non-ASCII chars on legacy code pages.
@@ -43,6 +44,9 @@ function Get-EnvOrDefault {
 $Root         = Get-EnvOrDefault 'GEMMA_ROOT'           (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $LlmPort      = [int](Get-EnvOrDefault 'GEMMA_LLM_PORT'      '11434')
 $SearchPort   = [int](Get-EnvOrDefault 'GEMMA_SEARCH_PORT'   '11435')
+# Embedding service (RAG Retriever A). Optional infra: if it's down, the
+# /embed proxy below returns 502 and chat.html degrades to tag-only retrieval.
+$EmbedPort    = [int](Get-EnvOrDefault 'GEMMA_EMBED_PORT'    '11436')
 $ListenPort   = 8080
 $ServerExe    = Get-EnvOrDefault 'GEMMA_SERVER_EXE'     ''
 $ModelDir     = Get-EnvOrDefault 'GEMMA_MODEL_DIR'      (Join-Path $Root 'models')
@@ -454,6 +458,36 @@ function Invoke-Proxy {
 
 function Handle-State {
     param($Request, $Response)
+    $path = $Request.Url.AbsolutePath
+
+    # GET /state/info -- lightweight metadata for the boot-time conflict
+    # check in chat.html. Returns just mtime + size so the client can decide
+    # whether to auto-restore, prompt, or no-op WITHOUT pulling the full
+    # state body (which can be multi-MB once threads accumulate).
+    #
+    # This branch used to be missing: the wildcard route in the dispatcher
+    # ('/state' OR '/state/*') sent /state/info into the GET branch below,
+    # which returned the full state JSON. That body parsed fine on the
+    # client but had no top-level 'mtime' or 'size' fields, so the boot
+    # check silently treated the server as empty -- auto-restore and the
+    # conflict prompt could never fire, and any localStorage at a fresh
+    # origin (new IP, new device, cleared cache) showed an empty chat
+    # while the real data sat untouched on disk.
+    if ($Request.HttpMethod -eq 'GET' -and $path -eq '/state/info') {
+        if (Test-Path $StatePath) {
+            $item = Get-Item $StatePath
+            $mtimeMs = [int64]($item.LastWriteTimeUtc - [DateTime]'1970-01-01').TotalMilliseconds
+            $Response.AddHeader('X-State-Mtime', "$mtimeMs")
+            Write-Json $Response 200 @{ mtime = $mtimeMs; size = $item.Length }
+        } else {
+            Write-Json $Response 404 @{ error = 'no state on server' }
+        }
+        return
+    }
+
+    # GET /state -- full body, used by restoreFromServer() when the client
+    # has decided to pull. Kept separate from /state/info so the metadata
+    # check stays cheap.
     if ($Request.HttpMethod -eq 'GET') {
         if (Test-Path $StatePath) {
             $text = Get-Content $StatePath -Raw -Encoding UTF8
@@ -509,6 +543,24 @@ function Get-ModelRecord {
     return $null
 }
 
+# Is a sidecar .jinja a real template, or junk we must not pass to
+# llama-server? Mirrors Test-IsUsableTemplate in identify-model.ps1. A failed
+# download (e.g. the 15-byte "Entry not found" body) or an empty file would
+# otherwise be handed to --chat-template-file and render to a constant string
+# for every turn -- the model then ignores the conversation entirely.
+function Test-IsUsableTemplateFile {
+    param([string]$Path)
+    try {
+        if (-not (Test-Path $Path)) { return $false }
+        $raw = [System.IO.File]::ReadAllText($Path)
+    } catch { return $false }
+    if ($null -eq $raw) { return $false }
+    $t = $raw.Trim([char]0).Trim()
+    if ($t.Length -lt 16) { return $false }
+    if ($t -ieq 'Entry not found') { return $false }
+    return ($t.Contains('{%') -or $t.Contains('{{'))
+}
+
 # Build the launch command line for a given model record. Mirrors the
 # argument set that launch.bat constructs in its :start_server block --
 # context size, GPU layers, KV cache type, parallel slots, optional jinja
@@ -517,11 +569,11 @@ function Get-ModelRecord {
 function Build-LaunchScript {
     param($Model, [string]$ModelPath)
 
-    $useJinja      = $true
-    $chatTemplate  = ''
+    $useJinja       = $true
+    $chatTemplate   = ''
     $chatTemplateFile = ''
+
     if ($Model.PSObject.Properties.Match('useJinja').Count -gt 0) {
-        # JSON ints come through as Int64 -- coerce defensively.
         $useJinja = [bool]([int]$Model.useJinja)
     }
     if ($Model.PSObject.Properties.Match('chatTemplate').Count -gt 0 -and $Model.chatTemplate) {
@@ -531,47 +583,51 @@ function Build-LaunchScript {
         $chatTemplateFile = [string]$Model.chatTemplateFile
     }
 
-    # Safety net for stale records. identify-model.ps1 now tags Mistral Nemo
-    # with useJinja=0 + mistral-v3-tekken, but a models-list.json generated
-    # before that fix may still carry a mis-identified Nemo as 'custom' with
-    # useJinja=1. Launching such a record with --jinja makes llama-server abort
-    # on the startup tool-call-example check ("did not stay running"). Detect
-    # Nemo by name here and force the built-in template so the swap works even
-    # without regenerating models-list.json. Honors an explicit non-empty
-    # chatTemplate if one is already set; only overrides the broken --jinja path.
     $nameForMatch = ''
     if ($Model.PSObject.Properties.Match('name').Count -gt 0 -and $Model.name) { $nameForMatch = [string]$Model.name }
     $fileForMatch = ''
     if ($Model.PSObject.Properties.Match('file').Count -gt 0 -and $Model.file) { $fileForMatch = [string]$Model.file }
-    if (($nameForMatch -match 'nemo|(^|[-_])mn-') -or ($fileForMatch -match 'nemo|(^|[-_])mn-')) {
-        if ($useJinja -or -not $chatTemplate) {
-            $useJinja = $false
-            if (-not $chatTemplate) { $chatTemplate = 'mistral-v3-tekken' }
-            Write-Host "[swap] Nemo safety net: forcing built-in template '$chatTemplate' (--jinja disabled)"
+
+    # Safety net: prioritize external sidecar files if found.
+    # If a sidecar file exists, we force jinja on and ignore built-in template
+    # names -- BUT only after confirming the file is a real template. A failed
+    # download / empty file is discarded here so we drop through to the
+    # built-in below instead of launching with junk.
+    if ($chatTemplateFile -ne '') {
+        $sidecarAbs = if ([System.IO.Path]::IsPathRooted($chatTemplateFile)) { $chatTemplateFile } else { Join-Path $Root $chatTemplateFile }
+        if (Test-IsUsableTemplateFile $sidecarAbs) {
+            $useJinja = $true
+            $chatTemplate = '' # Clear built-in name to prevent collision
+        } else {
+            Write-Host ("[swap] ignoring unusable sidecar template: {0}" -f $chatTemplateFile)
+            $chatTemplateFile = ''
+        }
+    }
+    if ($chatTemplateFile -eq '') {
+        # Legacy Safety Nets
+        if (($nameForMatch -match 'nemo|(^|[-_])mn-') -or ($fileForMatch -match 'nemo|(^|[-_])mn-')) {
+            if ($useJinja -or -not $chatTemplate) {
+                $useJinja = $false
+                if (-not $chatTemplate) { $chatTemplate = 'mistral-v3-tekken' }
+            }
+        }
+        if (($nameForMatch -match 'cydonia|asmodeus|mistral[-_.]?small') -or
+            ($fileForMatch -match 'cydonia|asmodeus|mistral[-_.]?small')) {
+            if ($useJinja -or -not $chatTemplate) {
+                $useJinja = $false
+                if (-not $chatTemplate) { $chatTemplate = 'mistral-v7' }
+            }
         }
     }
 
-    # Same class of failure for Granite, but with an extra twist. Its embedded
-    # tool-calling Jinja template makes the new-engine startup autoparser abort
-    # ("failed to generate tool call example"), AND the bare built-in name
-    # (--chat-template granite) does NOT resolve on current llama.cpp builds --
-    # it gets treated as a literal template, so the model is fed just the word
-    # "granite" and talks about the rock. The fix is a cleaned no-tools template
-    # FILE (granite.jinja, shipped in $Root) passed via --chat-template-file with
-    # --jinja on. This safety net catches stale models-list.json records (written
-    # before the identify-model.ps1 fix, carrying useJinja=1 / no file / or the
-    # old bare 'granite' name) and forces the file path so the swap works without
-    # regenerating the list.
-    if (($nameForMatch -match 'granite') -or ($fileForMatch -match 'granite')) {
-        if (-not $chatTemplateFile) {
-            $chatTemplateFile = 'granite.jinja'
-            # Drop a stale bare-name template ('granite' / 'granite-4.0') so the
-            # file path below takes precedence cleanly.
-            if ($chatTemplate -match '^granite') { $chatTemplate = '' }
-            $useJinja = $true
-            Write-Host "[swap] Granite safety net: forcing template file 'granite.jinja' (--jinja on, embedded template overridden)"
-        }
-    }
+    # The pinned llama.cpp build does NOT register "mistral-v7-tekken" as a
+    # built-in template name. Passed bare to --chat-template it is treated as a
+    # literal template *body* and renders to that constant ~8-token string for
+    # every request -- the model never sees the conversation and just talks
+    # about "tekken". "mistral-v7" resolves to the real C++ template (only delta
+    # is a trailing space after [INST]/[SYSTEM_PROMPT], harmless for inference).
+    # Normalize unconditionally so no stale models-list.json record can leak it.
+    if ($chatTemplate -eq 'mistral-v7-tekken') { $chatTemplate = 'mistral-v7'; $useJinja = $false }
 
     $argList = @(
         ('"{0}"' -f $ServerExe),
@@ -584,38 +640,32 @@ function Build-LaunchScript {
         '--cache-type-v', $KvCacheType,
         '--parallel',  '1'
     )
-    # Template source precedence (mirrors launch.bat):
-    #   1. chatTemplateFile -> --jinja --chat-template-file "<$Root\file>"
-    #      (a real .jinja shipped with the project; --jinja is REQUIRED for
-    #       --chat-template-file to be honored). Overrides the embedded template.
-    #   2. chatTemplate (built-in NAME) -> --chat-template <name>, --jinja off.
-    #   3. neither -> plain --jinja (embedded template) if useJinja.
-    if ($chatTemplateFile) {
-        $resolvedTemplatePath = Join-Path $Root $chatTemplateFile
-        if (Test-Path $resolvedTemplatePath) {
-            $argList += '--jinja'
-            $argList += @('--chat-template-file', ('"{0}"' -f $resolvedTemplatePath))
-        } else {
-            Write-Host "[swap] WARNING: chat-template file not found: $resolvedTemplatePath -- falling back to --jinja (embedded template)"
-            $argList += '--jinja'
-        }
-    } else {
-        if ($useJinja)     { $argList += '--jinja' }
-        if ($chatTemplate) { $argList += @('--chat-template', $chatTemplate) }
+    
+    if ($useJinja) { $argList += '--jinja' }
+    
+    # A sidecar template is a FILE -> --chat-template-file (loads the file).
+    # A built-in name is a STRING -> --chat-template (selects the C++ template).
+    # These are not interchangeable: passing a file path to --chat-template
+    # makes llama-server treat the path text itself as a literal template.
+    if ($chatTemplateFile -ne '') {
+        $sidecarAbs = if ([System.IO.Path]::IsPathRooted($chatTemplateFile)) { $chatTemplateFile } else { Join-Path $Root $chatTemplateFile }
+        $argList += @('--chat-template-file', ('"{0}"' -f $sidecarAbs))
+    } elseif ($chatTemplate) {
+        $argList += @('--chat-template', $chatTemplate)
     }
+
     $argList += @('--reasoning-format', 'auto')
-    # Require the API key so only this proxy (which injects it) can talk to the
-    # model. Bound to 127.0.0.1 above, so it's off the LAN regardless.
     if ($LlmApiKey -ne '') { $argList += @('--api-key', ('"{0}"' -f $LlmApiKey)) }
 
     $line = ($argList -join ' ')
-    # Redirect both stdout and stderr to the shared log file so the monitor
-    # loop and post-mortems can read it.
     $line = $line + (' > "{0}" 2>&1' -f $LogFile)
 
-    # Plain CRLF batch file. No fancy quoting -- everything that needs
-    # escaping is already wrapped in double quotes above.
-    return "@echo off`r`n" + $line + "`r`n"
+    $auditLog = ($LogFile -replace '\.log$', '') + '.launch-history.log'
+    $stamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    $auditPrelude = 'echo [' + $stamp + '] hot-swap launch >> "' + $auditLog + '"' + "`r`n" +
+                     'echo [args] ' + $line + ' >> "' + $auditLog + '"'
+
+    return "@echo off`r`n" + $auditPrelude + "`r`n" + $line + "`r`n"
 }
 
 # Stop the currently-running llama-server process(es). We match by image
@@ -1087,6 +1137,13 @@ while ($listener.IsListening) {
         }
         elseif ($path -eq '/search' -or $path -like '/search/*') {
             Invoke-Proxy -Request $request -Response $response -Prefix '/search' -UpstreamPort $SearchPort
+        }
+        elseif ($path -eq '/embed' -or $path -like '/embed/*') {
+            # RAG embedding upstream (llama-server --embeddings on loopback).
+            # Inherits the session-cookie auth like every other proxied call,
+            # so phones authenticate once. If the embed server isn't running,
+            # Invoke-Proxy returns 502 and the client falls back to tag-only.
+            Invoke-Proxy -Request $request -Response $response -Prefix '/embed' -UpstreamPort $EmbedPort
         }
         else {
             # Static fallthrough.

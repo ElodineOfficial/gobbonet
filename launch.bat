@@ -166,6 +166,37 @@ set "SWAP_STATUS=%~dp0.swap-status.json"
 :: Leave empty to auto-detect the first .gguf in the models folder.
 set "MODEL_GGUF="
 
+:: ---------------------------------------------------------------
+:: EMBEDDING SERVER (RAG Retriever A) -- optional, CPU by default
+::
+:: A second llama-server instance with --embeddings powers semantic
+:: retrieval for the RAG. It is OPTIONAL: if the model cannot be
+:: fetched or the server will not start, chat works normally and the
+:: RAG falls back to tag-only retrieval (Retriever B). It is CPU-only
+:: by default (EMBED_GPU_LAYERS=0) so it never steals VRAM from the
+:: chat model -- embeddings are cheap on CPU. Set EMBED_GPU_LAYERS=99
+:: to opt into GPU offload.
+::
+:: To disable entirely: set EMBED_ENABLE=0.
+:: nomic-embed-text wants the search_document:/search_query: task
+:: prefixes (chat.html adds them) and mean pooling (--pooling mean,
+:: set in the launch line further down). A lighter alternative is
+:: bge-small-en; if you swap models, update EMBED_MODEL_GGUF + URL.
+:: ---------------------------------------------------------------
+set "EMBED_ENABLE=1"
+set "EMBED_PORT=11436"
+set "EMBED_CTX=2048"
+set "EMBED_GPU_LAYERS=0"
+set "EMBED_MODEL_GGUF=nomic-embed-text-v1.5.Q8_0.gguf"
+set "EMBED_MODEL_URL=https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf?download=true"
+:: Known-good SHA-256 of the embedding GGUF. Leave EMPTY to download
+:: without verifying; after the first download the script prints the
+:: hash and the exact line to paste here to pin it (same mechanism as
+:: LLAMA_PIN_SHA256 above).
+set "EMBED_PIN_SHA256="
+set "EMBED_LOG_FILE=%~dp0embed-server.log"
+set "EMBED_LAUNCH_SCRIPT=%~dp0.embed-launch.cmd"
+
 goto :main
 
 :: ===============================================================
@@ -1256,6 +1287,81 @@ if exist "!LOG_FILE!" (
 echo.
 
 :: ---------------------------------------------------------------
+:: STEP 3c: EMBEDDING SERVER (RAG Retriever A) -- optional
+:: Second llama-server (--embeddings) on loopback :EMBED_PORT, CPU by
+:: default. Degrade-safe: any failure just logs a note and continues
+:: to the search proxy; chat is never blocked. NOT part of the
+:: health-monitor / hot-swap loop -- if it dies, the RAG degrades to
+:: tag-only and the chat server is left untouched.
+:: ---------------------------------------------------------------
+:start_embed
+if /i "!EMBED_ENABLE!"=="0" (
+    echo  [*] Embedding server disabled ^(EMBED_ENABLE=0^) -- RAG uses tag-only retrieval.
+    goto :start_proxy
+)
+
+curl.exe -s -o nul http://127.0.0.1:!EMBED_PORT!/health >nul 2>&1
+if not errorlevel 1 (
+    echo  [OK] Embedding server already on :!EMBED_PORT!
+    goto :start_proxy
+)
+
+set "EMBED_PATH=!MODEL_DIR!\!EMBED_MODEL_GGUF!"
+if exist "!EMBED_PATH!" goto :embed_spawn
+
+echo  [..] Downloading embedding model ^(one-time, ~146 MB^): !EMBED_MODEL_GGUF!
+curl.exe -L --fail --retry 3 --progress-bar -o "!EMBED_PATH!" "!EMBED_MODEL_URL!"
+if errorlevel 1 (
+    echo  [*] Embedding model download failed -- RAG semantic search will be OFF.
+    echo      Chat works normally; weighted-tag retrieval still functions.
+    del /f /q "!EMBED_PATH!" >nul 2>&1
+    goto :start_proxy
+)
+
+set "EMBED_ACTUAL="
+for /f "skip=1 delims=" %%H in ('certutil -hashfile "!EMBED_PATH!" SHA256 2^>nul') do if not defined EMBED_ACTUAL set "EMBED_ACTUAL=%%H"
+set "EMBED_ACTUAL=!EMBED_ACTUAL: =!"
+if not defined EMBED_PIN_SHA256 (
+    echo  [*] Embedding model not pinned. To lock it for future installs, set in launch.bat:
+    echo        set "EMBED_PIN_SHA256=!EMBED_ACTUAL!"
+    goto :embed_spawn
+)
+if /i "!EMBED_ACTUAL!"=="!EMBED_PIN_SHA256!" (
+    echo  [OK] Embedding model checksum verified.
+    goto :embed_spawn
+)
+echo  [*] Embedding model CHECKSUM MISMATCH -- deleting and skipping ^(RAG semantic off^).
+echo        expected: !EMBED_PIN_SHA256!
+echo        actual:   !EMBED_ACTUAL!
+del /f /q "!EMBED_PATH!" >nul 2>&1
+goto :start_proxy
+
+:embed_spawn
+:: Write a small launcher (mirrors the chat server's .llama-launch.cmd).
+:: --pooling mean is required by nomic/e5-style embedders; skip it and
+:: retrieval quality quietly drops.
+> "!EMBED_LAUNCH_SCRIPT!" (
+    echo @echo off
+    echo "!SERVER_EXE!" --model "!EMBED_PATH!" --port !EMBED_PORT! --host 127.0.0.1 --embeddings --pooling mean --ctx-size !EMBED_CTX! --n-gpu-layers !EMBED_GPU_LAYERS! ^> "!EMBED_LOG_FILE!" 2^>^&1
+)
+echo  [..] Starting embedding server on :!EMBED_PORT! ^(CPU^)...
+start /min "embed-server" "!EMBED_LAUNCH_SCRIPT!"
+
+set "ERETRIES=0"
+:embed_wait
+set /a ERETRIES+=1
+if !ERETRIES! gtr 40 (
+    echo  [*] Embedding server did not come up in time -- RAG semantic search OFF.
+    echo      Chat works normally; weighted-tag retrieval still functions.
+    goto :start_proxy
+)
+timeout /t 1 /nobreak >nul
+curl.exe -s -o nul http://127.0.0.1:!EMBED_PORT!/health >nul 2>&1
+if errorlevel 1 goto :embed_wait
+echo  [OK] Embedding server ready on :!EMBED_PORT!
+echo.
+
+:: ---------------------------------------------------------------
 :: STEP 4: SEARCH PROXY (127.0.0.1:11435 -> ollama.com/api)
 :: The search proxy is independent of the inference backend.
 :: It's a simple HTTP relay so the chat UI can do web searches.
@@ -1319,6 +1425,7 @@ if not exist "%~dp0fileserver.ps1" (
 set "GEMMA_ROOT=%~dp0."
 set "GEMMA_LLM_PORT=!SERVER_PORT!"
 set "GEMMA_SEARCH_PORT=11435"
+set "GEMMA_EMBED_PORT=!EMBED_PORT!"
 :: Extra env vars the file server needs to spawn a replacement
 :: llama-server during a hot-swap. fileserver.ps1 reads these once at
 :: startup and uses them to build the new launch command when the
