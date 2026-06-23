@@ -5787,6 +5787,32 @@ function createThread() {
   document.getElementById('msg-input').focus();
 }
 
+/**
+ * Activity-based ordering: float a thread to the top of the list. Called
+ * when a thread sees fresh activity (a message sent) so the threads you're
+ * actively working in rise on their own — the same spot new threads and
+ * forks already land via unshift. This keeps the in-use threads reachable
+ * without anyone having to pin them.
+ *
+ * Operates on state.threads directly. Array order is the list's source of
+ * truth — the very order drag-to-reorder edits — so this coexists with
+ * manual arranging: a drag sets an order, and the next message in a thread
+ * floats it back to the top. No-op when the thread is already first or isn't
+ * found, so it's cheap to call on every send.
+ *
+ * The pinned / folder / unfiled sections each render a filtered view of this
+ * one array in its existing order, so a bumped thread rises to the top of
+ * WHICHEVER section it lives in (its folder, the pinned group, or unfiled)
+ * without leaking across sections.
+ */
+function bumpThreadToTop(threadId) {
+  const idx = state.threads.findIndex(t => t.id === threadId);
+  if (idx > 0) {
+    const [t] = state.threads.splice(idx, 1);
+    state.threads.unshift(t);
+  }
+}
+
 function deleteThread(id, event) {
   if (event) event.stopPropagation();
   // If the chain was running on this thread, it has nowhere to go now.
@@ -6084,6 +6110,11 @@ async function sendMessage(overrideContent) {
   if (attachmentText) userMessage.attachmentText = attachmentText;
   if (attachmentMeta.length) userMessage.attachments = attachmentMeta;
   thread.messages.push(userMessage);
+  // Fresh activity floats this thread to the top of the list, alongside the
+  // new threads and forks that already land there — so the threads you're
+  // actively working in stay reachable without pinning. No-op if it's already
+  // first (e.g. a brand-new thread, or one you just messaged).
+  bumpThreadToTop(thread.id);
   saveState();
   if (!isProgrammatic) {
     input.value = '';
