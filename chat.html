@@ -5639,16 +5639,28 @@ function forkAt(messageIndex) {
   // input stays empty — the user is continuing forward, not re-asking.
   const defaultInput = isAiBranch ? '' : (sourceMsg ? (sourceMsg.content || '') : '');
 
-  // Deep-copy shared history. The spread on `m` handles primitives,
-  // but msg.variants (added by the reroll feature) is an array of
-  // objects — without an explicit clone, mutating a variant slot in
-  // the fork would leak back into the source thread. Clone defensively
-  // even on messages that don't currently have variants, since they
-  // might gain them later via reroll in either thread.
+  // Deep-copy shared history. The spread on `m` handles primitives, but two
+  // nested structures need explicit cloning or the fork would share mutable
+  // state with the source:
+  //   • msg.variants (reroll / edit history) — an array of objects.
+  //   • each variant's `continuation` (the parked downstream subtree a user
+  //     wording owns) — an array of message objects that can themselves carry
+  //     variants and continuations. Mutating a restored branch in the fork
+  //     (e.g. rerolling one of its replies) must not bleed back into source.
+  // Clone defensively even on messages without variants today, since they
+  // might gain them later via edit / reroll in either thread. continuation is
+  // deep-cloned with a JSON round-trip — the same shape this data already
+  // takes through saveState, so nothing meaningful is lost.
   const sharedMessages = thread.messages.slice(0, cutoff).map(m => {
     const copy = { ...m };
     if (Array.isArray(m.variants)) {
-      copy.variants = m.variants.map(v => ({ ...v }));
+      copy.variants = m.variants.map(v => {
+        const vc = { ...v };
+        if (Array.isArray(v.continuation)) {
+          vc.continuation = JSON.parse(JSON.stringify(v.continuation));
+        }
+        return vc;
+      });
     }
     return copy;
   });
@@ -6340,40 +6352,60 @@ function saveEdit(index) {
     // so the user can flip back to it via the ◀ ▶ navigator. Symmetric
     // with rerollMessage() on the assistant side: every edit is preserved.
     //
-    // First-time edit on a plain user message: promote the existing
-    // content (plus any search results / attachments that belonged to
-    // that wording) into variant 0 so it isn't lost. Subsequent edits:
-    // sync whatever's currently visible into the active slot first
-    // (covers the case where the user flipped to an older variant and
-    // THEN hit Edit — we'd otherwise drop the flipped-to wording).
+    // CRUCIAL: a user edit truncates and regenerates everything below this
+    // message. That downstream subtree — this message's AI reply and every
+    // reroll / turn that followed it — belongs to the wording being edited
+    // AWAY from. Snapshot it here, BEFORE the truncation, and park it on
+    // that wording's variant as its `continuation`. Flipping the navigator
+    // back to that wording restores the whole branch, AI rerolls and all,
+    // instead of finding it deleted. (This is the fix for "editing loses
+    // the unique AI rerolls": each wording now owns its own conversation
+    // tree rather than sharing one destructible tail.)
+    const priorDownstream = thread.messages.slice(index + 1);
+
+    // First-time edit on a plain user message: promote the existing content
+    // (plus any search results / attachments that belonged to that wording)
+    // into variant 0, and hand it the downstream generated under it.
+    // Subsequent edits: sync whatever's currently visible into the active
+    // slot first (covers the case where the user flipped to an older wording
+    // and THEN hit Edit — we'd otherwise drop the flipped-to wording), then
+    // re-park the current downstream on that active variant.
     if (!Array.isArray(msg.variants) || msg.variants.length === 0) {
       msg.variants = [{
         content:        msg.content || '',
         timestamp:      msg.timestamp || Date.now(),
         searchData:     msg.searchData,
         attachmentText: msg.attachmentText,
-        attachments:    msg.attachments
+        attachments:    msg.attachments,
+        continuation:   priorDownstream
       }];
+      msg.activeVariant = 0;
     } else {
       syncActiveVariant(msg);
+      const activeIdx = msg.activeVariant ?? 0;
+      if (msg.variants[activeIdx]) msg.variants[activeIdx].continuation = priorDownstream;
     }
 
-    // Append the new wording as a fresh variant and switch to it.
-    // Search results and attachments don't carry forward — they belong
-    // to the prior wording. If search is enabled and applies to the new
-    // wording, the regenerate cycle below will populate searchData on
-    // the active message via sendMessage's search step path.
-    // (We use the same {} shape the assistant reroll path uses so
-    // applyVariantToMessage's delete-when-absent branches fire and the
-    // top-level msg drops the stale fields cleanly.)
+    // Append the new wording as a fresh variant and switch to it. Its branch
+    // starts empty (continuation: []) and is generated below; it gets parked
+    // automatically the first time the user flips away from it.
+    // Search results and attachments don't carry forward — they belong to
+    // the prior wording. If search is enabled and applies to the new wording,
+    // the regenerate cycle below will populate searchData on the active
+    // message via sendMessage's search step path. (We use the same {} shape
+    // the assistant reroll path uses so applyVariantToMessage's
+    // delete-when-absent branches fire and the top-level msg drops the stale
+    // fields cleanly.)
     msg.variants.push({
-      content:   newContent,
-      timestamp: Date.now()
+      content:      newContent,
+      timestamp:    Date.now(),
+      continuation: []
     });
     msg.activeVariant = msg.variants.length - 1;
     applyVariantToMessage(msg);
 
-    // Truncate everything after and regenerate (existing behavior).
+    // Truncate to the edited message (the prior branch is now safely parked
+    // on its variant, not lost) and regenerate the new branch.
     thread.messages = thread.messages.slice(0, index + 1);
     state.editingIndex = null;
     saveState();
@@ -6419,15 +6451,30 @@ function deleteMessage(index) {
      phrasings without losing them.
 
    In both cases the ◀ ▶ navigator shows the variants for that
-   message; the rest of the conversation is unaffected by flipping.
+   message. Flipping an ASSISTANT variant is local — it re-selects a
+   reroll of that one message and leaves the rest of the conversation
+   alone. Flipping a USER variant swaps the whole branch beneath it
+   (see `continuation` below): each wording carries its own downstream.
    For "what would the conversation look like if I'd taken a
    different path here?" use Branch — that's the heavier sibling-
    thread tool. Variants are the cheap in-place history.
 
    Data shape (all fields optional; absent = legacy single-variant):
      msg.variants     = [ {content, reasoning, searchData,
-                           attachmentText, attachments, timestamp}, ... ]
+                           attachmentText, attachments, timestamp,
+                           continuation}, ... ]
      msg.activeVariant = index into variants
+
+   continuation (USER variants only) is the downstream subtree that
+   followed that wording — the array of messages after this one, each
+   carrying its own variants / rerolls. It's how a user edit keeps,
+   rather than destroys, the AI replies that belonged to the prior
+   wording: editing parks the live downstream on the wording being
+   left and starts the new wording on a fresh branch; flipping the
+   navigator swaps between whole branches. Assistant variants share a
+   single downstream and omit it. Messages sitting in a parked
+   continuation are NOT in thread.messages, so they don't count toward
+   context or tokens until that branch is restored.
 
    Fields are stored per-variant whether or not they apply to the
    role — reasoning/searchData are typically assistant-side,
@@ -6442,14 +6489,20 @@ function deleteMessage(index) {
    the active one IS the message, from their point of view.
    Variants are an additive layer.
 
-   Flipping a USER variant is visual + state-update only: msg.content
-   becomes the flipped-to wording so any subsequent regenerate sees
-   it, but no regenerate fires automatically. The downstream AI
-   reply still reflects whichever wording was active at its last
-   generation — possibly mismatched with the currently-shown user
-   variant. That's intentional; auto-regenerating on every flip
-   would make ◀ ▶ destructive and burn tokens. To commit to a
-   different wording, flip to it and Reroll the AI message below.
+   Flipping a USER variant restores that wording's parked branch (its
+   continuation) into thread.messages: msg.content becomes the
+   flipped-to wording AND the downstream below it becomes the AI
+   replies / rerolls that were generated under that wording. Nothing
+   regenerates and no tokens are spent — a flip just re-selects an
+   already-built branch — so ◀ ▶ stays cheap and non-destructive while
+   no longer losing the tree. To start a NEW branch from a prior
+   wording, flip to it and Edit (which forks a fresh continuation off
+   that wording) or Reroll the AI reply below. Legacy user variants
+   saved before branches were tracked carry no continuation: the active
+   branch is captured the first time you flip away from it, and
+   wordings whose branches predate this feature (discarded by the old
+   edit path) restore empty until regenerated — no NEW loss, just the
+   honest state of data the previous code had already dropped.
 ---------------------------------------------------------------- */
 
 /** Copy the message's current visible fields into the active variant slot. */
@@ -6515,16 +6568,37 @@ function switchVariant(messageIndex, delta) {
   if (!msg) return;
   if (!Array.isArray(msg.variants) || msg.variants.length < 2) return;
 
-  // Capture any in-place edits the user made to the currently
-  // selected variant before we swap away from it.
-  syncActiveVariant(msg);
-
   const cur = msg.activeVariant ?? 0;
   const next = cur + delta;
   if (next < 0 || next >= msg.variants.length) return;
 
+  // Capture any in-place edits the user made to the currently selected
+  // variant's own fields before we swap away from it.
+  syncActiveVariant(msg);
+
+  // For USER messages, each variant owns the downstream subtree that
+  // followed that wording — its AI reply plus every reroll / turn after it.
+  // Park the live downstream on the variant we're leaving, then restore the
+  // downstream belonging to the variant we're moving to, so the ◀ ▶
+  // navigator swaps the WHOLE branch. No regeneration and no token burn —
+  // we're just re-selecting an already-generated tree — and, crucially, the
+  // AI rerolls that belong to each wording are never lost. Assistant
+  // variants are rerolls of a single message and share one downstream, so
+  // they carry no continuation and this whole block is skipped for them.
+  if (msg.role === 'user') {
+    msg.variants[cur].continuation = thread.messages.slice(messageIndex + 1);
+  }
+
   msg.activeVariant = next;
   applyVariantToMessage(msg);
+
+  if (msg.role === 'user') {
+    const restored = Array.isArray(msg.variants[next].continuation)
+      ? msg.variants[next].continuation
+      : [];
+    thread.messages = thread.messages.slice(0, messageIndex + 1).concat(restored);
+  }
+
   saveState();
   renderMessages();
   // Don't scroll — the user is reading variants, not chasing the bottom.
@@ -7637,10 +7711,10 @@ function renderMessages() {
           const atFirst = (m.activeVariant ?? 0) === 0;
           const atLast  = (m.activeVariant ?? 0) === total - 1;
           actionsHtml += `
-          <span class="variant-nav" title="Flip between prior wordings — every edit is kept. Flipping doesn't regenerate the AI reply below; for that, flip then Reroll, or use Branch.">
-            <button class="variant-nav-btn" ${atFirst ? 'disabled' : ''} onclick="switchVariant(${i}, -1)" title="Previous wording">◀</button>
+          <span class="variant-nav" title="Flip between prior wordings — each keeps its own AI replies and rerolls. Flipping restores that wording's whole branch below; it doesn't regenerate or spend tokens. To branch anew from a wording, flip to it and Edit.">
+            <button class="variant-nav-btn" ${atFirst ? 'disabled' : ''} onclick="switchVariant(${i}, -1)" title="Previous wording (restores its branch)">◀</button>
             <span class="variant-nav-label">${cur}/${total}</span>
-            <button class="variant-nav-btn" ${atLast ? 'disabled' : ''} onclick="switchVariant(${i}, 1)" title="Next wording">▶</button>
+            <button class="variant-nav-btn" ${atLast ? 'disabled' : ''} onclick="switchVariant(${i}, 1)" title="Next wording (restores its branch)">▶</button>
           </span>`;
         }
       } else {
