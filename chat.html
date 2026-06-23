@@ -4575,7 +4575,11 @@ async function summarizeForLore(existingLore, messagesToSummarize) {
 
    This pass produces a Nemo-safe array without losing content:
      1. Merge ALL leading system messages into one (joined by \n\n).
-     2. Drop any leading assistant messages left over from token-trim.
+     2. Fold any leading assistant message(s) — the opening greeting,
+        plus the rare token-trim leftover — into the leading system
+        block as a labeled opening, so the array can start on a user
+        turn WITHOUT deleting that content from context. (Previously
+        these were dropped, which silently lost the greeting.)
      3. Fold mid-conversation system messages into the NEXT user
         message as a [System: ...] prefix. If no user follows, append
         to the previous user message as a trailing note.
@@ -4616,8 +4620,27 @@ function normalizeMessagesForStrictTemplates(messages) {
     if (working[i].content) leadingSystem.push(working[i].content);
     i++;
   }
+  // Leading assistant message(s) — almost always the character's opening
+  // greeting, which injectGreeting() stamps onto the thread at messages[0] as
+  // an assistant turn (and, far more rarely, an old AI reply left orphaned at
+  // the front by the token-trim safety net above). Strict templates (Mistral
+  // Nemo et al.) forbid the array from opening on an assistant turn, so these
+  // can't be kept in place. The OLD behavior simply skipped — i.e. deleted —
+  // them, which silently dropped the greeting from the model's context: the
+  // scene-setting opening that's meant to prime the whole conversation never
+  // actually reached the model. Instead we PRESERVE that text by folding it
+  // into the leading system block as a labeled opening, so it still sets the
+  // scene while the array safely starts system -> user. Empty / whitespace
+  // assistant turns (e.g. a greeting slot blanked for an in-flight reroll)
+  // carry no content and are skipped, so nothing spurious is injected.
+  const leadingAssistant = [];
   while (i < working.length && working[i].role === 'assistant') {
+    const c = (working[i].content || '').trim();
+    if (c) leadingAssistant.push(working[i].content);
     i++;
+  }
+  if (leadingAssistant.length) {
+    leadingSystem.push('[Opening message — the start of this conversation]\n' + leadingAssistant.join('\n\n'));
   }
 
   const out = [];
