@@ -2758,6 +2758,25 @@ function idbGetAllKeys(store)  { return new Promise((res, rej) => { const r = id
 function applyLoadedState(saved) {
   try {
       state.threads = saved.threads || [];
+
+      // Restore the user-arranged thread order. On the IndexedDB backend the
+      // 'threads' store is keyed by id, so idbGetAll('threads') hands records
+      // back in id order — not the array order the user arranged by dragging
+      // (nor what bump-to-top / new-thread-unshift produced). buildStateBlob()
+      // persists that order as `threadOrder`; re-apply it here so a reload
+      // matches what was on screen. Idempotent for the localStorage/server
+      // blobs (their `threads` already arrive in order) and skipped for older
+      // saves that predate `threadOrder`. Any thread absent from the order list
+      // (e.g. a record synced in separately) keeps its relative position after
+      // the ranked ones, thanks to the stable sort.
+      if (Array.isArray(saved.threadOrder) && state.threads.length > 1) {
+        const rank = new Map(saved.threadOrder.map((id, i) => [id, i]));
+        const unranked = saved.threadOrder.length;
+        state.threads.sort((a, b) =>
+          (rank.has(a.id) ? rank.get(a.id) : unranked) -
+          (rank.has(b.id) ? rank.get(b.id) : unranked));
+      }
+
       state.activeThreadId = saved.activeThreadId || null;
       state.settings = { ...DEFAULT_SETTINGS, ...(saved.settings || {}) };
       state.sidebarOpen = saved.sidebarOpen !== undefined ? saved.sidebarOpen : true;
@@ -3117,6 +3136,13 @@ function cleanThread(t) {
 function buildStateBlob() {
   return {
     threads: state.threads.map(cleanThread),
+    // Persist the user-arranged order explicitly. The IDB 'threads' store is
+    // keyed by id, so idbGetAll('threads') returns records in id order on
+    // reload — losing the array order that drag-to-reorder, bump-to-top, and
+    // new-thread-unshift produce (array order is the list's source of truth).
+    // This id list rides along in the blob (and, via metaPartOf, into the IDB
+    // 'meta' record) so applyLoadedState() can restore that order on load.
+    threadOrder: state.threads.map(t => t.id),
     activeThreadId: state.activeThreadId,
     settings: state.settings,
     characterCards: state.characterCards,
