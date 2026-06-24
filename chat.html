@@ -8245,12 +8245,36 @@ function updateContextInfo() {
   el.textContent = info;
 }
 
-function scrollToBottom() {
+function scrollToBottom(opts) {
+  // behavior:  'auto' (instant, default) or 'smooth' (animated glide).
+  // respectPin: when true, the scroll is abandoned if the user has unpinned
+  //             by the time the deferred callback runs. Only the streaming/
+  //             auto path passes this; forced actions (send, switch thread,
+  //             reroll, FAB) leave it false and always land at the end.
+  const behavior   = (opts && opts.behavior) || 'auto';
+  const respectPin = !!(opts && opts.respectPin);
   const container = document.getElementById('messages');
+  if (!container) return;
   // Double rAF: first fires before paint, second fires after layout has settled.
   // Critical for <details open> blocks whose height isn't known until after paint.
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    container.scrollTop = container.scrollHeight;
+    // Honor the follow-pin at EXECUTION time, not schedule time. During a
+    // stream we queue one of these every ~80ms while the user is pinned; two
+    // frames later they may have touched the message area to stop following.
+    // Re-checking here means a scroll queued a moment before that touch bails
+    // instead of slamming the viewport back to the bottom and undoing the
+    // stop — the single biggest reason a tap "didn't easily stop" the scroll.
+    if (respectPin && !scrollPinnedToBottom) return;
+
+    if (behavior === 'smooth') {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+    } else {
+      // Instant. The per-token chase MUST be instant: content grows every
+      // tick, so an animated scroll chases a moving target it can never catch
+      // and ends up trailing a few messages behind. A snap re-pin each tick
+      // stays glued to the true bottom.
+      container.scrollTop = container.scrollHeight;
+    }
     // Also chase the bottom of the COT content box while it's actively streaming
     const cotContent = container.querySelector('.cot-block.cot-active .cot-content');
     if (cotContent) cotContent.scrollTop = cotContent.scrollHeight;
@@ -8320,14 +8344,15 @@ function attachScrollPinTracking() {
   // preventDefault); native scrolling and text selection still work.
   container.addEventListener('touchstart', () => {
     if (!isGenerating || !scrollPinnedToBottom) return;
+    // One touch on the stream = stop following, deterministically. The part
+    // that makes this stick is the pin re-check inside scrollToBottom()'s
+    // rAF: any auto-scroll queued on the previous streaming tick (while we
+    // were still pinned) sees scrollPinnedToBottom === false two frames later
+    // and bails instead of yanking the viewport back to the bottom. Combined
+    // with dropping the global `scroll-behavior: smooth` (which used to keep
+    // an animation perpetually in flight), a single tap now wins — the old
+    // version lost a tug-of-war against both the queued scroll and the glide.
     scrollPinnedToBottom = false;
-    // Kill any in-flight smooth auto-scroll (.messages has
-    // scroll-behavior: smooth) so the stop is instant rather than gliding
-    // to the bottom; the user's own touch scroll takes over from here.
-    const y = container.scrollTop;
-    container.style.scrollBehavior = 'auto';
-    container.scrollTop = y;
-    container.style.scrollBehavior = '';
     updateFollowButton();
   }, { passive: true });
 
@@ -8341,8 +8366,8 @@ function attachScrollPinTracking() {
  *  scrollToBottom() itself still does the work when we are pinned —
  *  this is just a guarded delegate. */
 function autoScrollToBottom() {
-  if (!scrollPinnedToBottom) return;
-  scrollToBottom();
+  if (!scrollPinnedToBottom) return;       // cheap fast-path: skip scheduling entirely...
+  scrollToBottom({ respectPin: true });    // ...and re-checked inside the rAF (see scrollToBottom)
 }
 
 /** Streaming-tick COT inner-scroll. Same pin-respect pattern, but the
@@ -8436,7 +8461,10 @@ function updateFollowButton() {
  *  resumes chasing the bottom from here; a finished one just lands there. */
 function followToBottom() {
   scrollPinnedToBottom = true;
-  scrollToBottom();
+  // Instant while a reply is still streaming — a smooth glide would only
+  // fight the per-tick instant chase that resumes the moment we re-pin. A
+  // gentle glide is fine (and nicer) once the stream has already finished.
+  scrollToBottom({ behavior: isGenerating ? 'auto' : 'smooth' });
   updateFollowButton();   // hide now that we're pinned again
 }
 

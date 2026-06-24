@@ -556,7 +556,13 @@ body::after {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  scroll-behavior: smooth;
+  /* No global `scroll-behavior: smooth` here on purpose. The streaming
+     auto-scroll re-pins to the bottom every ~80ms; with smooth scrolling
+     each re-pin became an animated glide that never caught the still-growing
+     content, so the view trailed a few messages behind the newest tokens
+     (and the in-flight animation fought a tap trying to stop following).
+     Smoothness is now opt-in per call — only the follow-to-bottom button,
+     and only once a reply has finished streaming. See scrollToBottom(). */
 }
 
 .message {
