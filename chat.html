@@ -557,17 +557,50 @@ input[type="range"]::-moz-range-thumb {
 }
 .ext-entry-name {
   flex: 1;
+  min-width: 0;
+  background: var(--black);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--cyan-bright);
   font-family: var(--font);
   font-weight: 700;
+  font-size: 14px;
   letter-spacing: 0.5px;
+  padding: 8px 12px;
+  transition: all var(--transition);
 }
-.ext-entry-url { width: 100%; margin-bottom: 6px; }
+.ext-entry-url {
+  width: 100%;
+  margin-bottom: 6px;
+  background: var(--black);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--cyan-bright);
+  font-family: var(--font);
+  font-size: 14px;
+  padding: 10px 14px;
+  transition: all var(--transition);
+}
+.ext-entry-name:focus,
+.ext-entry-url:focus {
+  outline: none;
+  border-color: var(--cyan-bright);
+  box-shadow: var(--glow-cyan);
+}
+.ext-entry-name::placeholder,
+.ext-entry-url::placeholder {
+  color: rgba(0,243,255,0.25);
+  font-style: italic;
+}
 .ext-entry .ext-code-area { width: 100%; }
 .ext-entry-empty {
   font-size: 12px;
   color: var(--cyan-dim);
   font-style: italic;
   padding: 4px 0 8px;
+}
+@media (max-width: 700px) {
+  .ext-entry-name, .ext-entry-url { font-size: 16px; } /* prevent iOS zoom on focus */
 }
 </style>
 </head>
@@ -679,6 +712,20 @@ input[type="range"]::-moz-range-thumb {
         Your name, avatar, and text colors moved to <strong>Personas</strong> &mdash;
         open the Characters panel and edit your persona card.
         You can keep multiple personas and swap between them per conversation.
+      </div>
+    </div>
+
+    <div class="form-group" style="margin-top:12px; padding:12px; border:1px solid rgba(0,243,255,0.18); border-radius:var(--radius); background:rgba(0,243,255,0.02);">
+      <label for="set-avatar-scale">&#128100; Avatar Size</label>
+      <div class="form-hint" style="margin-top:2px;margin-bottom:10px;">Scales every avatar — in chat, on character cards, and on the dashboard. Applies live; set it wherever it reads best on your screen.</div>
+      <div style="display:flex;align-items:center;gap:14px;">
+        <input type="range" id="set-avatar-scale" min="0.7" max="1.6" step="0.05" value="1" oninput="previewAvatarScale(this.value)" style="flex:1;">
+        <span id="avatar-scale-val" style="font-size:13px;font-weight:700;color:var(--cyan-bright);min-width:46px;text-align:right;">100%</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:14px;">
+        <span class="form-hint" style="margin:0;flex-shrink:0;">Preview:</span>
+        <div class="msg-avatar" style="border-color:var(--cyan-dim);color:var(--cyan-bright);box-shadow:inset 0 0 12px rgba(0,0,0,0.85),0 0 9px rgba(0,243,255,0.22);">U</div>
+        <div class="msg-avatar" style="border-color:var(--magenta-dim);color:var(--magenta);box-shadow:inset 0 0 12px rgba(0,0,0,0.85),0 0 9px rgba(217,0,255,0.22);">AI</div>
       </div>
     </div>
 
@@ -948,7 +995,7 @@ input[type="range"]::-moz-range-thumb {
 
         <div style="margin-top:14px;padding-top:10px;border-top:1px dashed rgba(255,255,255,0.08);">
           <label style="color:var(--cyan-dim);font-size:12px;letter-spacing:0.5px;">Advanced — XTC &amp; DRY</label>
-          <div class="form-hint" style="margin-top:2px;margin-bottom:10px;">Force exploration (XTC) and block phrase repetition (DRY). Especially useful for confident models like Gemma where temperature alone has limited effect.</div>
+          <div class="form-hint" style="margin-top:2px;margin-bottom:10px;">Force exploration (XTC) and block phrase repetition (DRY). Especially useful for confident models that stay rigid even when temperature alone is turned up.</div>
 
           <div class="form-row">
             <div class="form-group" style="flex:1;">
@@ -1287,31 +1334,24 @@ input[type="range"]::-moz-range-thumb {
 
     <div style="text-align:center;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border);">
       <div style="font-size:28px;font-weight:800;letter-spacing:2px;color:var(--green-neon);line-height:1;">GOBBONET</div>
-      <div style="font-size:11px;color:rgba(255,255,255,0.3);margin-top:4px;letter-spacing:1.5px;">LOCAL AI TERMINAL // llama.cpp</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.3);margin-top:6px;letter-spacing:1.5px;">LOCAL AI TERMINAL // llama.cpp</div>
+      <div style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:12px;line-height:1.6;max-width:48ch;margin-left:auto;margin-right:auto;">A self-hosted chat workbench for any local GGUF model — characters, memory, branching, and deep sampler control, all running on hardware you own.</div>
     </div>
 
     <div style="display:flex;flex-direction:column;gap:12px;font-size:13px;">
 
       <div style="padding:10px 12px;border:1px solid rgba(0,255,65,0.15);border-radius:var(--radius);background:rgba(0,255,65,0.03);">
-        <div style="color:var(--green-neon);font-size:11px;font-weight:700;letter-spacing:1px;margin-bottom:6px;">&#128274; PRIVACY</div>
-        <div style="color:rgba(255,255,255,0.55);line-height:1.6;">Runs 100% on your machine. No accounts, no telemetry, no cloud. The only optional network traffic is the web search proxy — which you control.</div>
+        <div style="color:var(--green-neon);font-size:11px;font-weight:700;letter-spacing:1px;margin-bottom:6px;">&#128274; PRIVATE BY DESIGN</div>
+        <div style="color:rgba(255,255,255,0.55);line-height:1.6;">Runs 100% on your machine — no accounts, no telemetry, no cloud round-trips. The only optional network call is the web-search proxy, and you decide when it's on. Your conversations and models never leave the building.</div>
       </div>
 
-      <div style="padding:10px 12px;border:1px solid rgba(0,243,255,0.12);border-radius:var(--radius);background:rgba(0,243,255,0.02);">
-        <div style="color:var(--cyan-mid);font-size:11px;font-weight:700;letter-spacing:1px;margin-bottom:8px;">&#9881; FEATURES</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;color:rgba(255,255,255,0.5);font-size:12px;line-height:1.8;">
-          <span>&#10003; Character cards</span>
-          <span>&#10003; Carousel prompts</span>
-          <span>&#10003; Lore compression</span>
-          <span>&#10003; Scheduler</span>
-          <span>&#10003; Web search</span>
-          <span>&#10003; Logit bias</span>
-          <span>&#10003; Branch / fork</span>
-          <span>&#10003; Custom macros</span>
-          <span>&#10003; CSS / JS mods</span>
-          <span>&#10003; Data export</span>
-          <span>&#10003; LAN access</span>
-          <span>&#10003; Chain-of-thought</span>
+      <div style="padding:12px 14px;border:1px solid rgba(0,243,255,0.12);border-radius:var(--radius);background:rgba(0,243,255,0.02);">
+        <div style="color:var(--cyan-mid);font-size:11px;font-weight:700;letter-spacing:1px;margin-bottom:10px;">&#9881; WHAT'S INSIDE</div>
+        <div style="display:flex;flex-direction:column;gap:11px;color:rgba(255,255,255,0.55);font-size:12px;line-height:1.55;">
+          <div><span style="color:var(--cyan-bright);font-weight:700;">&#128172; Conversations</span> &mdash; branch &amp; fork any message into parallel timelines, reroll replies and step back through every variant, follow the model's reasoning in collapsible chain-of-thought, and schedule prompts to fire on their own.</div>
+          <div><span style="color:var(--cyan-bright);font-weight:700;">&#127917; Characters &amp; memory</span> &mdash; build character cards or import them from SillyTavern / TavernAI (V1&ndash;V3), swap personas per chat, fold older turns into compressed lore, and pull the right backstory in on cue with weighted-tag retrieval.</div>
+          <div><span style="color:var(--cyan-bright);font-weight:700;">&#127899; Fine control</span> &mdash; per-character samplers (temperature, min-p, top-p, repeat penalty, XTC, DRY), logit bias to nudge or ban specific tokens, carousel system prompts, and {{macros}} that expand before they reach the model.</div>
+          <div><span style="color:var(--cyan-bright);font-weight:700;">&#129513; Extend &amp; own it</span> &mdash; inject your own CSS and JS, tune the interface right down to avatar size, reach it from any device on your LAN, and export or back up everything &mdash; threads, characters, settings &mdash; as portable JSON.</div>
         </div>
       </div>
 
@@ -1319,8 +1359,9 @@ input[type="range"]::-moz-range-thumb {
         <div style="color:rgba(255,255,255,0.4);font-size:11px;font-weight:700;letter-spacing:1px;margin-bottom:6px;">&#128218; STACK</div>
         <div style="color:rgba(255,255,255,0.4);line-height:1.7;font-size:12px;">
           <div><span style="color:var(--green-neon);">Model</span> &mdash; <span id="about-model-line">Local GGUF (detecting...)</span></div>
-          <div><span style="color:var(--green-neon);">Runtime</span> &mdash; llama.cpp &mdash; zero deps, CUDA/Vulkan/CPU</div>
+          <div><span style="color:var(--green-neon);">Runtime</span> &mdash; llama.cpp &mdash; runs any GGUF; CUDA/Vulkan/CPU</div>
           <div><span style="color:var(--green-neon);">Frontend</span> &mdash; Vanilla HTML/CSS/JS &mdash; no frameworks</div>
+          <div><span style="color:var(--green-neon);">Storage</span> &mdash; IndexedDB in your browser &mdash; nothing server-side</div>
           <div><span style="color:var(--green-neon);">Server</span> &mdash; PowerShell HTTP listener + launch.bat</div>
         </div>
       </div>
@@ -2594,6 +2635,7 @@ const DEFAULT_SETTINGS = {
   apiKey: '',
   cotTimeoutEnabled: false,
   cotTimeoutMinutes: 2,
+  avatarScale: 1,             // avatar size multiplier (CONFIG slider; 1 = default)
   // ---- RAG retrieval knobs (Stage 1) ----
   // Full snapshot of these rides into every telemetry record's `config`
   // block so any turn is reproducible. Tune one knob at a time; the shadow
@@ -8558,11 +8600,15 @@ function openSettings() {
   document.getElementById('set-cot-timeout-enabled').checked = !!state.settings.cotTimeoutEnabled;
   document.getElementById('set-cot-timeout-minutes').value = state.settings.cotTimeoutMinutes || 2;
   updateCotTimeoutRow();
+  const aScale = state.settings.avatarScale || 1;
+  document.getElementById('set-avatar-scale').value = aScale;
+  document.getElementById('avatar-scale-val').textContent = Math.round(aScale * 100) + '%';
   document.getElementById('settings-modal').classList.add('open');
 }
 
 function closeSettings() {
   document.getElementById('settings-modal').classList.remove('open');
+  applyAvatarScale(); // revert any unsaved live-preview drag back to the saved value
 }
 
 function saveSettings() {
@@ -8572,11 +8618,27 @@ function saveSettings() {
   state.settings.apiKey = document.getElementById('set-apikey').value.trim();
   state.settings.cotTimeoutEnabled = document.getElementById('set-cot-timeout-enabled').checked;
   state.settings.cotTimeoutMinutes = parseInt(document.getElementById('set-cot-timeout-minutes').value) || 2;
+  state.settings.avatarScale = parseFloat(document.getElementById('set-avatar-scale').value) || 1;
   saveState();
   closeSettings();
   renderMessages();
   updateContextInfo();
   updatePrivacyBadge();
+}
+
+/* Avatar size — a single CSS var (--avatar-scale) multiplies every avatar's
+   base dimension at every breakpoint. previewAvatarScale() runs live as the
+   CONFIG slider moves; applyAvatarScale() restores the saved value (on boot,
+   and on Cancel to discard an unsaved drag). */
+function previewAvatarScale(val) {
+  const scale = parseFloat(val) || 1;
+  document.documentElement.style.setProperty('--avatar-scale', scale);
+  const lbl = document.getElementById('avatar-scale-val');
+  if (lbl) lbl.textContent = Math.round(scale * 100) + '%';
+}
+function applyAvatarScale() {
+  const scale = (state.settings && state.settings.avatarScale) || 1;
+  document.documentElement.style.setProperty('--avatar-scale', scale);
 }
 
 /* ================================================================
@@ -11212,6 +11274,7 @@ function closeAbout() {
   document.getElementById('search-toggle').classList.toggle('active', searchEnabled);
   setupInput();
   applyExtensions(); // Apply any saved CSS/JS extensions
+  applyAvatarScale(); // restore saved avatar size preference
 
   // Load default characters from JSON, then render the landing page.
   // fetch() works when served via launch.bat; fails silently on file:// (no CORS).

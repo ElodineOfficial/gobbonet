@@ -1,5 +1,5 @@
 /* ========================================================
-   GOBLIN_BIOS v3.0 — GEMMA 4 TERMINAL INTERFACE
+   GOBLIN_BIOS v3.0 — LOCAL LLM TERMINAL INTERFACE
    Theme: Neon Cyberpunk / Deep Sci-Fi Terminal
    Colors: Cyan, Magenta, Deep Indigo. Zero Orange.
 ======================================================== */
@@ -66,6 +66,11 @@
   --sidebar-w:    300px;
   --radius:       6px;
   --transition:   0.25s cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Avatar size multiplier — driven by the slider in CONFIG (1 = default).
+     Every avatar dimension is calc(base * var(--avatar-scale)), so this one
+     knob scales chat, card, and dashboard avatars at every breakpoint. */
+  --avatar-scale: 1;
 
   /* Reusable Glows */
   --glow-cyan:    0 0 10px rgba(0, 243, 255, 0.4), 0 0 20px rgba(0, 243, 255, 0.2);
@@ -502,7 +507,7 @@ body::after {
   text-shadow: 0 0 5px rgba(255,255,255,0.4);
 }
 .chat-header .thread-title::before {
-  content: "sysadmin@gemma4:~# ";
+  content: "sysadmin@gobbonet:~# ";
   color: var(--cyan-dim);
   font-weight: 400;
   text-shadow: none;
@@ -600,24 +605,24 @@ body::after {
 
 .msg-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 8px; }
 .msg-avatar {
-  width: 32px;
-  height: 32px;
+  width: calc(50px * var(--avatar-scale, 1));
+  height: calc(50px * var(--avatar-scale, 1));
   border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: calc(20px * var(--avatar-scale, 1));
   font-weight: 800;
   flex-shrink: 0;
-  border: 1px solid var(--border);
+  border: 2px solid var(--border);
   background: var(--black);
   overflow: hidden;
   color: var(--cyan-mid);
   text-transform: uppercase;
   box-shadow: inset 0 0 10px rgba(0,0,0,0.8);
 }
-.message-user .msg-avatar { border-color: var(--cyan-dim); color: var(--cyan-bright); }
-.message-assistant .msg-avatar { border-color: var(--magenta-dim); color: var(--magenta); }
+.message-user .msg-avatar { border-color: var(--cyan-dim); color: var(--cyan-bright); box-shadow: inset 0 0 12px rgba(0,0,0,0.85), 0 0 9px rgba(0,243,255,0.22); }
+.message-assistant .msg-avatar { border-color: var(--magenta-dim); color: var(--magenta); box-shadow: inset 0 0 12px rgba(0,0,0,0.85), 0 0 9px rgba(217,0,255,0.22); }
 .msg-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; filter: contrast(1.2); }
 
 .message-role {
@@ -1114,20 +1119,21 @@ body::after {
 .card-item:hover { border-color: var(--cyan-dim); background: rgba(0, 243, 255, 0.05); transform: translateY(-2px); }
 .card-item.active { border-color: var(--magenta); background: rgba(217, 0, 255, 0.08); box-shadow: 0 0 15px rgba(217, 0, 255, 0.1); }
 .card-item .card-avatar {
-  width: 40px;
-  height: 40px;
+  width: calc(54px * var(--avatar-scale, 1));
+  height: calc(54px * var(--avatar-scale, 1));
   border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: calc(22px * var(--avatar-scale, 1));
   font-weight: bold;
   background: var(--black);
-  border: 1px solid var(--cyan-dim);
+  border: 2px solid var(--cyan-dim);
   flex-shrink: 0;
   overflow: hidden;
   color: var(--cyan-bright);
   text-transform: uppercase;
+  box-shadow: inset 0 0 8px rgba(0,0,0,0.8);
 }
 .card-item.active .card-avatar { border-color: var(--magenta); color: var(--white); box-shadow: var(--glow-magenta); }
 .card-item .card-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -1704,21 +1710,21 @@ input[type="color"].color-swatch::-moz-color-swatch { border: none; border-radiu
 .landing-preset-card:last-child { border-bottom: none; }
 
 .landing-char-avatar {
-  width: 38px;
-  height: 38px;
+  width: calc(54px * var(--avatar-scale, 1));
+  height: calc(54px * var(--avatar-scale, 1));
   border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
+  font-size: calc(22px * var(--avatar-scale, 1));
   font-weight: 800;
   flex-shrink: 0;
-  border: 1px solid var(--border);
+  border: 2px solid var(--border);
   background: var(--black);
   overflow: hidden;
   color: var(--magenta);
   text-transform: uppercase;
-  box-shadow: inset 0 0 8px rgba(0,0,0,0.8);
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.8), 0 0 8px rgba(217,0,255,0.18);
 }
 .landing-char-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
@@ -1880,7 +1886,7 @@ input[type="color"].color-swatch::-moz-color-swatch { border: none; border-radiu
   }
 
   .msg-header { gap: 8px; padding-bottom: 6px; margin-bottom: 6px; }
-  .msg-avatar { width: 28px; height: 28px; font-size: 12px; }
+  .msg-avatar { width: calc(46px * var(--avatar-scale, 1)); height: calc(46px * var(--avatar-scale, 1)); font-size: calc(18px * var(--avatar-scale, 1)); }
   .message-role { font-size: 11px; letter-spacing: 1.5px; }
 
   .message-content pre {
@@ -1950,7 +1956,7 @@ input[type="color"].color-swatch::-moz-color-swatch { border: none; border-radiu
   .landing-char-card, .landing-preset-card { padding: 10px 12px; gap: 10px; }
   .landing-char-name { font-size: 12px; }
   .landing-char-desc { font-size: 10px; }
-  .landing-char-avatar { width: 32px; height: 32px; font-size: 12px; }
+  .landing-char-avatar { width: calc(50px * var(--avatar-scale, 1)); height: calc(50px * var(--avatar-scale, 1)); font-size: calc(20px * var(--avatar-scale, 1)); }
   .landing-preset-icon { width: 32px; height: 32px; font-size: 18px; }
   .landing-hint { font-size: 11px; }
 
@@ -2068,7 +2074,7 @@ input[type="color"].color-swatch::-moz-color-swatch { border: none; border-radiu
   /* --- Character cards --- */
   .card-grid { max-height: 200px; padding-right: 4px; }
   .card-item { padding: 12px; gap: 10px; font-size: 13px; }
-  .card-item .card-avatar { width: 36px; height: 36px; font-size: 12px; }
+  .card-item .card-avatar { width: calc(50px * var(--avatar-scale, 1)); height: calc(50px * var(--avatar-scale, 1)); font-size: calc(20px * var(--avatar-scale, 1)); }
   /* Touch: always show card actions */
   .card-item .card-actions { opacity: 1; }
 
@@ -2123,7 +2129,7 @@ input[type="color"].color-swatch::-moz-color-swatch { border: none; border-radiu
   .chat-header .thread-title::before { content: "# "; }
   .message { padding: 10px 12px; font-size: 13px; }
   .message-role { font-size: 10px; }
-  .msg-avatar { width: 24px; height: 24px; font-size: 11px; }
+  .msg-avatar { width: calc(42px * var(--avatar-scale, 1)); height: calc(42px * var(--avatar-scale, 1)); font-size: calc(17px * var(--avatar-scale, 1)); }
 
   .welcome h2 { font-size: 15px; letter-spacing: 2px; }
   .welcome p { font-size: 12px; }
