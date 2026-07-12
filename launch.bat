@@ -1340,9 +1340,16 @@ goto :start_proxy
 :: Write a small launcher (mirrors the chat server's .llama-launch.cmd).
 :: --pooling mean is required by nomic/e5-style embedders; skip it and
 :: retrieval quality quietly drops.
+:: --batch-size/--ubatch-size are raised to EMBED_CTX because non-causal
+:: embedders must fit the WHOLE input in one ubatch. llama-server's
+:: default ubatch of 512 silently rejected anything longer, which made
+:: long storybook chunks invisible to semantic retrieval (the request
+:: 400s, chat.html got null, and the doc just never matched). chat.html
+:: now also slices its inputs into sub-512-token segments, so either
+:: side alone keeps embeds working -- together they give full headroom.
 > "!EMBED_LAUNCH_SCRIPT!" (
     echo @echo off
-    echo "!SERVER_EXE!" --model "!EMBED_PATH!" --port !EMBED_PORT! --host 127.0.0.1 --embeddings --pooling mean --ctx-size !EMBED_CTX! --n-gpu-layers !EMBED_GPU_LAYERS! ^> "!EMBED_LOG_FILE!" 2^>^&1
+    echo "!SERVER_EXE!" --model "!EMBED_PATH!" --port !EMBED_PORT! --host 127.0.0.1 --embeddings --pooling mean --ctx-size !EMBED_CTX! --batch-size !EMBED_CTX! --ubatch-size !EMBED_CTX! --n-gpu-layers !EMBED_GPU_LAYERS! ^> "!EMBED_LOG_FILE!" 2^>^&1
 )
 echo  [..] Starting embedding server on :!EMBED_PORT! ^(CPU^)...
 start /min "embed-server" "!EMBED_LAUNCH_SCRIPT!"

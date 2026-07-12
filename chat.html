@@ -54,6 +54,53 @@
 }
 .cot-content p { margin: 4px 0; }
 
+/* Storybook retrieval chip (Stage 2 visibility). Mirrors the CoT block's
+   look so meta-blocks read as one family; cyan accent = retrieval. */
+.rag-badge {
+  font-size: 11px;
+  color: var(--cyan-dim, rgba(0,243,255,0.6));
+  margin-left: 6px;
+  cursor: default;
+  user-select: none;
+}
+.rag-block {
+  margin: 4px 0 8px 0;
+  border: 1px solid rgba(0,243,255,0.12);
+  border-radius: 6px;
+  background: rgba(0,243,255,0.02);
+  overflow: hidden;
+  font-size: 12px;
+}
+.rag-summary {
+  padding: 5px 12px;
+  cursor: pointer;
+  color: rgba(0,243,255,0.55);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  user-select: none;
+  list-style: none;
+}
+.rag-summary::-webkit-details-marker { display: none; }
+.rag-summary::before {
+  content: '▸ ';
+  display: inline-block;
+  transition: transform 0.15s;
+}
+.rag-block[open] .rag-summary::before { transform: rotate(90deg); }
+.rag-content {
+  padding: 6px 12px 10px;
+  max-height: 240px;
+  overflow-y: auto;
+  border-top: 1px solid rgba(0,243,255,0.08);
+  color: rgba(255,255,255,0.5);
+  line-height: 1.6;
+}
+.rag-row .rag-id { color: var(--cyan-mid, rgba(0,243,255,0.75)); font-weight: 600; }
+.rag-row .rag-meta { opacity: 0.7; }
+.rag-row.rag-warn { color: rgba(255,165,0,0.8); }
+
 /* Archived messages — folded into lore, still visible to the user but
    no longer sent to the model. Dimmed so the live conversation visually
    dominates; click to "wake up" if we ever want that gesture later. */
@@ -891,9 +938,14 @@ input[type="range"]::-moz-range-thumb {
 
       <div class="form-group">
         <label for="card-rag-storybook">RAG Storybook <span style="opacity:0.5;font-weight:400;font-size:11px;">&mdash; retrieved on demand, not always-on</span></label>
-        <textarea id="card-rag-storybook" rows="6" placeholder="The big character/world bible. Author once; only the slice a scene needs enters context.&#10;&#10;Structured (weighted tags fire by theme):&#10;# selah&#10;A winged figure, divine and remote.&#10;tags: angel [1.0], divine [0.8], winged [1.0], halo [0.5]&#10;relation: reinhard&#10;role_in_arcs: protector&#10;offscreen_default: false&#10;use_principles: Render her speech as formal and archaic.&#10;&#10;...or just plain prose, which is chunked and matched semantically." style="font-size:12px;resize:vertical;" oninput="updateStorybookReadout()"></textarea>
-        <div class="form-hint">Unlike Starting Lore (small, always present), the storybook is large and pulled <strong>on demand</strong>. Accepts structured lines (<code>tags:</code>, <code>relation:</code>, <code>role_in_arcs:</code>, <code>offscreen_default:</code>, <code>use_principles:</code> &mdash; flat <code>name_tags:</code> form works too) and/or plain prose; the parser routes by shape. Tag <code>[weights]</code> are control data and never reach the model.</div>
+        <textarea id="card-rag-storybook" rows="6" placeholder="The big character/world bible. Author once; only the slice a scene needs enters context.&#10;&#10;Structured (title + tags fire the entry):&#10;# selah&#10;A winged figure, divine and remote.&#10;aliases: sel, the winged one&#10;tags: angel [1.0], divine [0.8], wing [1.0], halo [0.5]&#10;relation: reinhard&#10;role_in_arcs: protector&#10;offscreen_default: false&#10;use_principles: Render her speech as formal and archaic.&#10;&#10;...or just plain prose, which is chunked and matched semantically." style="font-size:12px;resize:vertical;" oninput="updateStorybookReadout()"></textarea>
+        <div class="form-hint">Unlike Starting Lore (small, always present), the storybook is large and pulled <strong>on demand</strong>. The <strong>title fires by itself</strong> &mdash; mention &quot;Selah&quot; and her entry pulls even with no tags &mdash; and <code>aliases:</code> adds alternate names that fire the same way. Tags match as stems (<code>wing</code> matches wing/wings/winged). Also accepts <code>relation:</code>, <code>role_in_arcs:</code> (priority boost, shown to the model), <code>offscreen_default:</code>, <code>use_principles:</code> &mdash; flat <code>name_tags:</code> form works too &mdash; and/or plain prose; the parser routes by shape. Tag <code>[weights]</code> are control data and never reach the model.</div>
         <div class="carousel-counter" id="storybook-readout"></div>
+        <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+          <input type="text" id="storybook-testfire-input" placeholder="Test fire: type a sample chat line, see what pulls" style="flex:1;font-size:12px;" onkeydown="if(event.key==='Enter'){event.preventDefault();runStorybookTestFire();}">
+          <button class="btn btn-sm" type="button" onclick="runStorybookTestFire()">Test fire</button>
+        </div>
+        <pre id="storybook-testfire-output" style="display:none; margin-top:8px; max-height:220px; overflow:auto; font-size:11px; padding:8px; background:var(--black); border:1px solid var(--border); border-radius:var(--radius); color:var(--cyan-mid); white-space:pre-wrap;"></pre>
       </div>
 
       <div class="form-group">
@@ -1383,7 +1435,7 @@ input[type="range"]::-moz-range-thumb {
    but this stamp still shows the old date, you're on a cached
    copy — hard-refresh (Ctrl+Shift+R) to bust it.
 ================================================================ */
-const CHAT_HTML_BUILD = '2026-05-16-nemo-strict-template-fix';
+const CHAT_HTML_BUILD = '2026-07-12-rag-stage2-identity-fire';
 console.log(`%c[chat.html build] ${CHAT_HTML_BUILD}`, 'color:#0a0;font-weight:bold');
 
 /* ================================================================
@@ -4502,8 +4554,87 @@ function updateStorybookReadout() {
   parts.push(`${c.entities} ${c.entities === 1 ? 'entity' : 'entities'}`);
   if (c.subtrees) parts.push(`${c.subtrees} subtree${c.subtrees !== 1 ? 's' : ''}`);
   parts.push(`${c.tags} tag${c.tags !== 1 ? 's' : ''}`);
+  if (c.aliases) parts.push(`${c.aliases} alias${c.aliases !== 1 ? 'es' : ''}`);
   parts.push(`${c.proseChunks} prose chunk${c.proseChunks !== 1 ? 's' : ''}`);
+  // Embed-segment count: how many pieces Retriever A will actually index.
+  // Matches ragSplitForEmbed exactly, so "1 chunk, 6 segments" tells you a
+  // long bio is being sliced (good) instead of silently rejected (the old
+  // failure mode).
+  try {
+    const segs = ragBuildDocPool(parsed).reduce((n, d) => n + ragSplitForEmbed(d.text).length, 0);
+    if (segs) parts.push(`${segs} embed segment${segs !== 1 ? 's' : ''}`);
+  } catch (e) { /* readout is best-effort */ }
   el.textContent = 'parsed \u2192 ' + parts.join(' \u00b7 ');
+}
+
+/* Test-fire (Stage 2): dry-run a sample chat line through the SAME
+   matching helpers the live retriever uses — ragEntityHits for tags/
+   titles/aliases, ragDocSim for semantics — with zero side effects: no
+   warmth mutation, no telemetry record, nothing injected. What fires
+   here fires in chat, by construction. */
+async function runStorybookTestFire() {
+  const out = document.getElementById('storybook-testfire-output');
+  const input = document.getElementById('storybook-testfire-input');
+  if (!out || !input) return;
+  const sample = (input.value || '').trim();
+  const raw = document.getElementById('card-rag-storybook')?.value || '';
+  out.style.display = 'block';
+  if (!sample) { out.textContent = 'Type a sample line first.'; return; }
+  if (!raw.trim()) { out.textContent = 'Storybook is empty \u2014 nothing to fire.'; return; }
+  let book;
+  try { book = parseStorybook(raw); } catch (e) { out.textContent = 'parse error: ' + (e && e.message); return; }
+
+  const cfg = state.settings;
+  const T = cfg.fireThreshold || 1.0;
+  const hits = ragEntityHits(book, sample.toLowerCase(), cfg);
+  const fmtMatch = (m) => m.map(t => t.implicit ? (t.term + ' (name)') : (t.term + ' [' + t.weight + ']')).join(', ');
+
+  const fired = [], near = [], atHalf = [];
+  for (const id of book.order) {
+    const h = hits[id];
+    if (!h || h.sum <= 0) continue;
+    const line = id + '  sum=' + h.sum.toFixed(2) + '  via ' + fmtMatch(h.matched) + (h.identityHit ? '  [identity]' : '');
+    if (h.sum >= T) fired.push(line);
+    else { near.push(line); if (h.sum >= T * 0.5) atHalf.push(id); }
+  }
+
+  const lines = [];
+  lines.push('fire threshold ' + T + '  \u00b7  same matcher as the live turn');
+  lines.push('');
+  lines.push(fired.length ? 'FIRES (' + fired.length + '):\n  ' + fired.join('\n  ') : 'FIRES: none');
+  if (near.length) {
+    lines.push('');
+    lines.push('Below threshold (' + near.length + '):\n  ' + near.join('\n  '));
+    if (atHalf.length) lines.push('  \u2192 would fire at threshold ' + (T * 0.5).toFixed(2) + ': ' + atHalf.join(', '));
+  }
+  out.textContent = lines.join('\n');
+
+  // Semantic side — async; first run indexes segments (cached after).
+  if (cfg.retrieverA) {
+    out.textContent += '\n\nSemantic (Retriever A): embedding\u2026';
+    try {
+      const qvec = await ragEmbedRaw(sample, 'query');
+      if (!qvec) {
+        out.textContent = out.textContent.replace(/embedding\u2026$/, 'embed server unreachable \u2014 tag-only.');
+        return;
+      }
+      const scored = [], unembeddable = [];
+      for (const d of ragBuildDocPool(book)) {
+        const ds = await ragDocSim(qvec, d.text);
+        if (ds.embedded === 0) unembeddable.push(d.id);
+        else scored.push({ id: d.id, sim: ds.sim });
+      }
+      scored.sort((a, b) => b.sim - a.sim);
+      let sem = scored.length
+        ? 'top matches: ' + scored.slice(0, 3).map(s =>
+            s.id + ' ' + s.sim.toFixed(2) + (s.sim >= RAG_SEM_FLOOR ? '' : ' (below floor)')).join(' \u00b7 ')
+        : 'no embeddable prose.';
+      if (unembeddable.length) sem += '\n  \u26a0 unembeddable: ' + unembeddable.join(', ') + ' \u2014 check embed-server.log';
+      out.textContent = out.textContent.replace(/embedding\u2026$/, sem);
+    } catch (e) {
+      out.textContent = out.textContent.replace(/embedding\u2026$/, 'error: ' + (e && e.message));
+    }
+  }
 }
 
 
@@ -4883,7 +5014,7 @@ function normalizeMessagesForStrictTemplates(messages) {
 }
 
 /* ================================================================
-   RAG ENGINE  (Stage 1 — dual retriever + telemetry)
+   RAG ENGINE  (Stage 2 — dual retriever + telemetry + visibility)
 
    Two retrievers feed context on demand, integrated at the single
    injection seam (buildContextMessages). Everything below is
@@ -4892,19 +5023,41 @@ function normalizeMessagesForStrictTemplates(messages) {
    B carries on; if a card has no storybook the whole thing no-ops.
 
      Retriever A — general / semantic. Entity descriptions + freeform
-       prose chunks are embedded once (cached by content hash) and
-       cosine-scored against the recent window each turn.
-     Retriever B — structured / weighted-tag. A thematic pull fires
-       when the SUMMED weight of matched tags >= fire_threshold;
-       entity + subtree granularity; one-hop relational expansion
-       gated by offscreen_default; warmth/decay kills flicker.
+       prose chunks are split into embed-safe segments (see
+       ragSplitForEmbed), embedded once each (cached by content
+       hash), and cosine-scored against the recent window each turn.
+       An entity's semantic score is the MAX over its segments, so
+       long bios no longer silently fall off the embedder's context.
+     Retriever B — structured / weighted-tag. A pull fires when the
+       SUMMED weight of matched tags >= fire_threshold, OR when the
+       entity is named directly: the section title and any `aliases:`
+       terms act as implicit identity tags (title+blurb entries with
+       zero authored tags now fire on their name — previously they
+       were invisible to B). Subtree leaf names only count when the
+       parent is also mentioned, so `reinhard.childhood` doesn't fire
+       on every stray "childhood". Entity + subtree granularity;
+       one-hop relational expansion gated by offscreen_default (and
+       never sourced from a candidate that suppression will veto);
+       warmth/decay kills flicker.
 
-   The unified ranker merges A+B, dedupes (an entity from both
-   sources costs budget once), ranks by score x arc-role, fills a
-   retrieval budget carved from the existing context budget, and
-   pushes survivors as system messages. Every decision is logged
-   into the per-turn telemetry record (Part 1 of the design) and
-   emitted on the 'gobbonet:retrieval' event for Stage 2 to consume.
+   The unified ranker merges A+B and dedupes (an entity from both
+   sources costs budget once). Scoring: tag weight-sums map through
+   the non-saturating w/(w+T) curve (margin above threshold keeps
+   mattering), semantic cosine is rescaled above RAG_SEM_FLOOR onto
+   the same 0..1 scale, and the two blend via noisy-OR so
+   corroboration outranks either signal alone. Direct name/alias
+   mentions get an identity score floor — if the user says "Selah",
+   Selah wins the budget. role_in_arcs still applies its priority
+   boost AND its text now rides into the injection header so the
+   model can see the entity's arc role.
+
+   Every decision is logged into the per-turn telemetry record and
+   emitted on the 'gobbonet:retrieval' event. Stage 2 consumes it:
+   a compact summary is attached to the assistant message and
+   rendered as the 📖 retrieval chip (what fired, why, what was
+   evicted), and the card editor's Test-fire box dry-runs a sample
+   line through the SAME matching helpers (ragEntityHits), so what
+   you see in the editor is what the live retriever does.
 ================================================================ */
 
 /* Fast, dependency-free string hash (FNV-1a, 32-bit, hex). Used as a
@@ -4918,6 +5071,45 @@ function ragHash(str) {
     h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
   }
   return ('00000000' + h.toString(16)).slice(-8);
+}
+
+/* ---- Shared retrieval constants ----
+   RAG_SEM_FLOOR: cosine below this is noise for the current embed model
+   (nomic-embed-text v1.5); scores are rescaled above it before blending.
+   RAG_EMBED_SEG_TOKENS / _HARD: chunker target / hard cap per segment, in
+   estimateTokens units. Chosen to stay under llama-server's DEFAULT
+   n_ubatch of 512 real tokens — non-causal embedders must fit the whole
+   input in one ubatch, so anything larger is rejected and the doc used to
+   silently vanish from Retriever A. launch.bat now passes --ubatch-size
+   explicitly, but the cap keeps older launchers working too.
+   RAG_QUERY_TOKENS: same ceiling for the per-turn query embed; long
+   4-message windows used to 400 the embed call and switch A off for the
+   turn while looking like the server was down. */
+const RAG_SEM_FLOOR = 0.25;
+const RAG_EMBED_SEG_TOKENS = 380;
+const RAG_EMBED_SEG_HARD = 440;
+const RAG_QUERY_TOKENS = 440;
+
+/* Compiled-regex cache for tag/name/alias terms. One matcher semantics
+   everywhere (authored tags, implicit title terms, aliases) so the editor
+   Test-fire box and the live retriever can never disagree.
+   The matcher is word-boundary anchored with a poor-man's stemmer: an
+   optional s/es/ed/ing suffix on the LAST word, so `wing` matches wing,
+   wings, winged, winging. Author tags as stems. It is one-directional —
+   `winged` still won't match "wings" — but strictly matches MORE than the
+   old exact-word regex ever did. */
+const _ragTermReCache = new Map();
+function ragTermRegex(term) {
+  const key = String(term).toLowerCase();
+  let re = _ragTermReCache.get(key);
+  if (re) return re;
+  const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Only append the inflection group when the term ends in a letter —
+  // terms ending in digits/punctuation get the plain word-boundary match.
+  const suffix = /[a-z]$/.test(key) ? '(?:s|es|ed|ing)?' : '';
+  re = new RegExp('\\b' + esc + suffix + '\\b');
+  _ragTermReCache.set(key, re);
+  return re;
 }
 
 /* Parse one *_tags value into [{term, weight}]. Bare terms default to
@@ -4944,9 +5136,11 @@ function parseWeightedTags(value) {
    "<id>_<suffix>: value" routes to structured control data; "<id>." prefixes
    address subtrees (entity.subtree). Anything that is not a recognized
    directive (and not a section header) is prose for Retriever A. */
-const RAG_DIRECTIVE_RE = /^([A-Za-z0-9][A-Za-z0-9_.\- ]*?)_(tags|relation(?:_[A-Za-z0-9]+)?|role_in_arcs|use(?:_[A-Za-z0-9]+)?|offscreen_default)\s*:\s*(.*)$/i;
+const RAG_DIRECTIVE_RE = /^([A-Za-z0-9][A-Za-z0-9_.\- ]*?)_(tags|alias(?:es)?|relation(?:_[A-Za-z0-9]+)?|role_in_arcs|use(?:_[A-Za-z0-9]+)?|offscreen_default)\s*:\s*(.*)$/i;
 // Bare directive (inside a "# entity" section): "tags: ...", "relation: ...".
-const RAG_BARE_DIRECTIVE_RE = /^(tags|relation(?:_[A-Za-z0-9]+)?|role_in_arcs|use(?:_[A-Za-z0-9]+)?|offscreen_default)\s*:\s*(.*)$/i;
+// `aliases:` lists alternate names ("sel, the winged one") — each is an
+// identity-level trigger, exactly like the section title itself.
+const RAG_BARE_DIRECTIVE_RE = /^(tags|alias(?:es)?|relation(?:_[A-Za-z0-9]+)?|role_in_arcs|use(?:_[A-Za-z0-9]+)?|offscreen_default)\s*:\s*(.*)$/i;
 // Section header forms: "# selah", "== selah ==", "[selah]". "##"/"." = subtree.
 const RAG_HEADER_RE = /^(?:#{1,3}\s*|\=\=\s*|\[)\s*([A-Za-z0-9][A-Za-z0-9_.\- ]*?)\s*(?:\=\=|\])?\s*$/;
 
@@ -4954,7 +5148,7 @@ function ragNewEntity(id) {
   return {
     id, kind: id.includes('.') ? 'subtree' : 'entity',
     parent: id.includes('.') ? id.split('.')[0] : null,
-    tags: [], relations: [], roleInArcs: '', usePrinciples: '',
+    tags: [], aliases: [], relations: [], roleInArcs: '', usePrinciples: '',
     offscreenDefault: false, prose: ''
   };
 }
@@ -4962,10 +5156,12 @@ function ragNewEntity(id) {
 /* Parse the whole storybook field. Routes structured lines to entities/
    subtrees (Retriever B) and plain prose to chunks (Retriever A). Supports
    BOTH the flat form ("selah_tags: angel [1.0]") and the sectioned form
-   ("# selah" header, then bare "tags: ..." + prose lines). */
+   ("# selah" header, then bare "tags: ..." + prose lines). `aliases:`
+   (or flat "selah_aliases:") lists alternate names — identity triggers,
+   same as the title itself. */
 function parseStorybook(raw) {
   const result = { entities: {}, order: [], proseChunks: [],
-                   counts: { entities: 0, subtrees: 0, tags: 0, proseChunks: 0 } };
+                   counts: { entities: 0, subtrees: 0, tags: 0, aliases: 0, proseChunks: 0 } };
   if (!raw || !raw.trim()) return result;
 
   const ensure = (id) => {
@@ -4975,6 +5171,10 @@ function parseStorybook(raw) {
   const applyDirective = (ent, suffix, value) => {
     const s = suffix.toLowerCase();
     if (s === 'tags') ent.tags = ent.tags.concat(parseWeightedTags(value));
+    else if (s === 'alias' || s === 'aliases') ent.aliases = ent.aliases.concat(
+      // parseWeightedTags tolerates a stray "[0.8]" on an alias, but the
+      // weight is discarded — aliases are identity-level by definition.
+      parseWeightedTags(value).map(t => t.term));
     else if (s === 'role_in_arcs') ent.roleInArcs = value.trim();
     else if (s === 'offscreen_default') ent.offscreenDefault = /^(1|true|yes|on)$/i.test(value.trim());
     else if (s.startsWith('relation')) ent.relations = ent.relations.concat(
@@ -5034,6 +5234,7 @@ function parseStorybook(raw) {
     const e = result.entities[id];
     if (e.kind === 'subtree') result.counts.subtrees++; else result.counts.entities++;
     result.counts.tags += e.tags.length;
+    result.counts.aliases += e.aliases.length;
   }
   result.counts.proseChunks = result.proseChunks.length
     + result.order.filter(id => result.entities[id].prose).length;
@@ -5054,11 +5255,88 @@ function getCardStorybook(card) {
   return card._storybook;
 }
 
+/* THE shared Retriever-B matcher. Both the live retriever and the card
+   editor's Test-fire box call this, so they can never drift apart.
+   Returns { id: { sum, matched:[{term,weight,implicit?}], identityHit,
+   nameHit } } for EVERY entity/subtree (tag-less ones included — that is
+   the point of the title fix).
+
+   Identity firing rules:
+   - Authored tag with weight >= fireThreshold matched → identityHit.
+   - The section TITLE (leaf name, >= 3 chars) matched → implicit identity
+     tag worth fireThreshold, so a bare name mention fires on its own and
+     scales if the user raises the threshold. Subtree leaves only count
+     when the parent's name (or a parent alias) is ALSO in the window —
+     `reinhard.childhood` shouldn't fire on every stray "childhood".
+   - Any `aliases:` term matched → same as a title hit.
+   nameHit covers title OR alias and is what bypasses offscreen
+   suppression downstream. */
+function ragEntityHits(book, windowLower, cfg) {
+  const T = (cfg && cfg.fireThreshold) || 1.0;
+  const hits = {};
+  for (const id of book.order) {
+    const e = book.entities[id];
+    let sum = 0; const matched = []; let identityHit = false;
+    for (const t of e.tags) {
+      if (ragTermRegex(t.term).test(windowLower)) {
+        matched.push({ term: t.term, weight: t.weight });
+        sum += t.weight;
+        if (t.weight >= T) identityHit = true;
+      }
+    }
+    const leaf = id.split('.').pop();
+    let nameHit = false;
+    if (leaf.length >= 3 && ragTermRegex(leaf).test(windowLower)) {
+      if (e.kind === 'entity') {
+        nameHit = true;
+      } else {
+        const parentLeaf = (e.parent || '').split('.').pop();
+        const pe = book.entities[e.parent];
+        if (parentLeaf && ragTermRegex(parentLeaf).test(windowLower)) nameHit = true;
+        else if (pe && pe.aliases.some(a => a && ragTermRegex(a).test(windowLower))) nameHit = true;
+      }
+    }
+    let aliasHit = '';
+    for (const a of e.aliases) {
+      if (a && ragTermRegex(a).test(windowLower)) { aliasHit = a; break; }
+    }
+    if (nameHit || aliasHit) {
+      identityHit = true;
+      matched.push({ term: aliasHit || leaf, weight: T, implicit: true });
+      sum += T;
+    }
+    hits[id] = { sum, matched, identityHit, nameHit: nameHit || !!aliasHit };
+  }
+  return hits;
+}
+
+/* Injection header the model sees. Subtree dots become em-dash breadcrumbs
+   ("reinhard — childhood"); role_in_arcs text rides along so the arc role
+   is model-visible context, not just a hidden ranking boost. Tags and
+   weights remain control data and never appear here. */
+function ragInjectionHeader(id, e) {
+  const pretty = String(id).split('.').join(' \u2014 ');
+  const role = e && e.roleInArcs && e.roleInArcs.trim() ? e.roleInArcs.trim() : '';
+  return '[Storybook: ' + pretty + (role ? ' | role: ' + role : '') + ']';
+}
+
+/* Per-turn compact summary handoff (Stage 2 visibility). runRetrieval
+   deposits it; the send/reroll flows consume it and pin it onto the
+   assistant message, where renderMessages draws the 📖 chip. Consume-once
+   so a stale summary can never attach to an unrelated turn. */
+let _ragLastTurnSummary = null;
+function consumeRagTurnSummary() {
+  const s = _ragLastTurnSummary;
+  _ragLastTurnSummary = null;
+  return s;
+}
+
 /* ---- Embedding client (Retriever A). Degrade-safe: any failure returns
    null and the caller proceeds tag-only. ---- */
 const RAG_EMBED_PREFIX = { document: 'search_document: ', query: 'search_query: ' };
 const _ragVecMem = new Map();      // hash -> Float32-ish array (in-memory mirror)
 let _ragEmbedDimWarned = false;
+const _ragEmbedFailWarned = new Set(); // doc ids we've already warned about this session
 
 async function ragEmbedRaw(text, mode) {
   // Returns a vector array, or null on any failure (server down, 401, etc.).
@@ -5115,6 +5393,96 @@ function ragCosine(a, b) {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
+/* Split prose into embed-safe segments. Packs paragraphs greedily up to
+   RAG_EMBED_SEG_TOKENS; a single oversize paragraph splits on sentence
+   boundaries, and a pathological run-on sentence gets hard word-chunked.
+   Every emitted segment is <= RAG_EMBED_SEG_HARD, which fits inside
+   llama-server's ubatch even on an older launch.bat that doesn't pass
+   --ubatch-size. Deterministic on identical input, so segment embeds
+   stay cache-hot across turns. */
+function ragSplitForEmbed(text) {
+  const t = (text || '').trim();
+  if (!t) return [];
+  if (estimateTokens(t) <= RAG_EMBED_SEG_HARD) return [t];
+  const segs = [];
+  let buf = '';
+  const flush = () => { if (buf.trim()) segs.push(buf.trim()); buf = ''; };
+  const pushPiece = (piece) => {
+    if (!piece.trim()) return;
+    const merged = buf ? buf + '\n\n' + piece : piece;
+    if (estimateTokens(merged) <= RAG_EMBED_SEG_TOKENS) { buf = merged; return; }
+    flush();
+    if (estimateTokens(piece) <= RAG_EMBED_SEG_HARD) { buf = piece; return; }
+    // Oversize paragraph → sentence packing.
+    const sentences = piece.match(/[^.!?\n]+[.!?]+\s*|[^.!?\n]+\n?/g) || [piece];
+    let sbuf = '';
+    for (const s of sentences) {
+      const m2 = sbuf ? sbuf + s : s;
+      if (estimateTokens(m2) <= RAG_EMBED_SEG_TOKENS) { sbuf = m2; continue; }
+      if (sbuf.trim()) segs.push(sbuf.trim());
+      sbuf = '';
+      if (estimateTokens(s) <= RAG_EMBED_SEG_HARD) { sbuf = s; continue; }
+      // Run-on sentence → hard word chunks.
+      const words = s.split(/\s+/);
+      let wbuf = [];
+      for (const w of words) {
+        wbuf.push(w);
+        if (estimateTokens(wbuf.join(' ')) >= RAG_EMBED_SEG_TOKENS) {
+          segs.push(wbuf.join(' '));
+          wbuf = [];
+        }
+      }
+      sbuf = wbuf.join(' ');
+    }
+    if (sbuf.trim()) buf = sbuf.trim(); // trailing sentence may pack with the next paragraph
+  };
+  for (const p of t.split(/\n\s*\n/)) pushPiece(p);
+  flush();
+  return segs;
+}
+
+/* Score one doc against the query vector: max cosine over its segments.
+   Long bios match on their best-fitting slice instead of one muddy (or
+   flat-out rejected) whole-text embed. Returns embedded/segment counts so
+   the caller can flag docs the embedder never accepted. */
+async function ragDocSim(qvec, text) {
+  const segs = ragSplitForEmbed(text);
+  let best = 0, embedded = 0;
+  for (const s of segs) {
+    const dv = await ragEmbedCached(s, 'document');
+    if (!dv) continue;
+    embedded++;
+    const sim = ragCosine(qvec, dv);
+    if (sim > best) best = sim;
+  }
+  return { sim: best, segments: segs.length, embedded };
+}
+
+/* Build the query text for the per-turn embed: newest messages first,
+   packed under RAG_QUERY_TOKENS. If even the newest message alone is
+   oversize, keep its TAIL — the freshest words are the trigger surface.
+   Tag matching still scans the FULL window; this cap is embed-only. */
+function ragQueryTextFromWindow(win) {
+  const parts = [];
+  let total = 0;
+  for (let i = win.length - 1; i >= 0; i--) {
+    const txt = ((win[i] && (win[i].content || win[i].reasoning)) || '').trim();
+    if (!txt) continue;
+    const cost = estimateTokens(txt);
+    if (total + cost > RAG_QUERY_TOKENS) {
+      if (parts.length === 0) {
+        const words = txt.split(/\s+/);
+        const keep = Math.max(20, Math.floor(RAG_QUERY_TOKENS * 0.7)); // tokens→words
+        parts.push(words.slice(-keep).join(' '));
+      }
+      break;
+    }
+    parts.push(txt);
+    total += cost;
+  }
+  return parts.reverse().join('\n');
+}
+
 /* Build the embeddable "doc" pool for a card: every entity/subtree that has
    description prose, plus every standalone prose chunk. Returns [{id, kind,
    parent, text, entityId}]. Embedding itself is lazy + cached per item. */
@@ -5140,7 +5508,11 @@ async function ragIngestCard(card) {
     if (!state.settings.retrievalEnabled || !state.settings.retrieverA) return;
     const book = getCardStorybook(card);
     const docs = ragBuildDocPool(book);
-    for (const d of docs) { await ragEmbedCached(d.text, 'document'); }
+    // Segment-level ingest: mirrors ragDocSim's cache keys exactly, so the
+    // first chat turn finds every slice already embedded.
+    for (const d of docs) {
+      for (const seg of ragSplitForEmbed(d.text)) { await ragEmbedCached(seg, 'document'); }
+    }
   } catch (e) { /* degrade silently */ }
 }
 
@@ -5228,7 +5600,7 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
   };
 
   try {
-    if (!cfg.retrievalEnabled) { record.budget.retrieval_tokens = 0; return finish(); }
+    if (!cfg.retrievalEnabled) { record.budget.retrieval_tokens = 0; _ragLastTurnSummary = null; return finish(); }
 
     const book = getCardStorybook(card);
     record.cards_in_play.push({
@@ -5241,7 +5613,7 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
     // Nothing authored → still emit a (cheap) record so the per-turn contract
     // holds, but skip all the work.
     const hasContent = book.order.length > 0 || book.proseChunks.length > 0;
-    if (!hasContent) { record.budget.retrieval_tokens = 0; return finish(); }
+    if (!hasContent) { record.budget.retrieval_tokens = 0; _ragLastTurnSummary = null; return finish(); }
 
     // ---- recent window (trigger surface) ----
     const live = thread.messages.filter(m => !m.archived);
@@ -5266,57 +5638,56 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
       return cand[id];
     };
 
-    // per-entity weight sums (also used for the shadow recompute)
-    const weightSums = {}; // id -> { sum, matched:[{term,weight}], identityHit:bool, nameHit:bool }
+    // per-entity weight sums (also used for the shadow recompute). Computed
+    // by the SAME helper the editor's Test-fire box uses (ragEntityHits) —
+    // title/alias identity terms are folded in there, so a tag-less
+    // "# title + blurb" entry fires on a name mention like anything else.
+    let weightSums = {}; // id -> { sum, matched:[{term,weight}], identityHit:bool, nameHit:bool }
 
-    // ---- Retriever B: weighted-tag firing ----
+    // ---- Retriever B: weighted-tag + identity-name firing ----
     if (cfg.retrieverB) {
+      weightSums = ragEntityHits(book, windowLower, cfg);
       for (const id of book.order) {
-        const e = book.entities[id];
-        if (!e.tags.length) continue;
-        let sum = 0; const matched = []; let identityHit = false;
-        for (const t of e.tags) {
-          const re = new RegExp('\\b' + t.term.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
-          if (re.test(windowLower)) {
-            matched.push({ term: t.term, weight: t.weight });
-            sum += t.weight;
-            if (t.weight >= cfg.fireThreshold) identityHit = true;
-          }
-        }
-        // explicit name mention (entity id or its leaf name) bypasses suppression
-        const leaf = id.split('.').pop();
-        const nameHit = new RegExp('\\b' + leaf.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(windowLower);
-        weightSums[id] = { sum, matched, identityHit, nameHit };
-
-        if (sum >= cfg.fireThreshold) {
-          const c = touch(id);
-          c.matched_tags = matched;
-          c.weight_sum = sum;
-          c.triggers.add(identityHit ? 'identity' : 'thematic_cluster');
-          c._nameHit = nameHit;
-        }
+        const ws = weightSums[id];
+        if (!ws || ws.sum < cfg.fireThreshold) continue;
+        const c = touch(id);
+        c.matched_tags = ws.matched;
+        c.weight_sum = ws.sum;
+        c.triggers.add(ws.identityHit ? 'identity' : 'thematic_cluster');
+        c._nameHit = ws.nameHit;
       }
     }
 
     // ---- Retriever A: semantic (+ backstop). Query embed is the only
-    //      per-turn embed call; doc vectors are cached from ingest. ----
+    //      per-turn embed call; doc SEGMENT vectors are cached from ingest.
+    //      The query is capped to RAG_QUERY_TOKENS (tail-preferring) so a
+    //      long window can't 400 the embed call and silently switch A off;
+    //      docs score as the max over their embed-safe segments. ----
     const docs = ragBuildDocPool(book);
     if (cfg.retrieverA && docs.length) {
-      const qvec = await ragEmbedRaw(windowText, 'query');
+      const qvec = await ragEmbedRaw(ragQueryTextFromWindow(win), 'query');
       if (qvec) {
         record.config.embed_available = true;
         const scored = [];
         for (const d of docs) {
-          const dv = await ragEmbedCached(d.text, 'document');
-          if (!dv) continue;
-          const sim = ragCosine(qvec, dv);
-          scored.push({ d, sim });
+          const ds = await ragDocSim(qvec, d.text);
+          if (ds.embedded === 0) {
+            // Server is up (query embedded) but every segment of this doc
+            // was rejected/failed — the old silent-invisibility bug, now
+            // surfaced in telemetry and once per session on the console.
+            if (record.flags.missing.indexOf(d.id) === -1) record.flags.missing.push(d.id);
+            if (!_ragEmbedFailWarned.has(d.id)) {
+              _ragEmbedFailWarned.add(d.id);
+              console.warn('[rag] doc "' + d.id + '" could not be embedded — invisible to Retriever A this session. Check embed-server.log.');
+            }
+            continue;
+          }
+          scored.push({ d, sim: ds.sim });
         }
         scored.sort((a, b) => b.sim - a.sim);
-        const SEM_FLOOR = 0.25;
         let taken = 0;
         for (const s of scored) {
-          if (s.sim < SEM_FLOOR) break;
+          if (s.sim < RAG_SEM_FLOOR) break;
           if (taken >= (cfg.topKA || 5)) break;
           taken++;
           const targetId = s.d.entityId || s.d.id;
@@ -5329,10 +5700,23 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
     }
 
     // ---- relational one-hop expansion (gated by offscreen_default) ----
+    // Expansion sources are pre-checked against the SAME suppression rule
+    // the ranker applies later: a thematic-only hit on an offscreen entity
+    // is going to be vetoed, so it must not pull its relations in first.
     if (cfg.expansionDepth >= 1 && cfg.retrieverB) {
       const fired = Object.keys(cand).filter(id => cand[id].triggers.has('identity')
         || cand[id].triggers.has('thematic_cluster'));
+      const willBeSuppressed = (id) => {
+        const c = cand[id];
+        if (!c || !c.offscreen || c.kind !== 'entity') return false;
+        const onlyThematic = c.triggers.has('thematic_cluster')
+          && !c.triggers.has('identity') && !c._nameHit;
+        if (!onlyThematic) return false;
+        const subtreeFired = fired.some(o => cand[o].parent === id);
+        return !subtreeFired;
+      };
       for (const id of fired) {
+        if (willBeSuppressed(id)) continue;
         const e = book.entities[id];
         if (!e) continue;
         for (const rel of e.relations) {
@@ -5374,9 +5758,23 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
     for (const id of Object.keys(cand)) {
       const c = cand[id];
       const tt = triggerType(c);
-      // base score: blend normalized weight-sum and semantic similarity
-      const wScore = c.weight_sum > 0 ? Math.min(1, c.weight_sum / (cfg.fireThreshold * 2)) : 0;
-      let base = Math.max(wScore, c.semScore);
+      // base score: blend weight-sum and semantic similarity.
+      //   wScore = w/(w+T): 0.5 at threshold, keeps climbing with margin —
+      //     the old min(1, w/2T) pinned everything past 2×T to the same
+      //     rank, erasing the author's weights right when they mattered.
+      //   semN: cosine rescaled above RAG_SEM_FLOOR onto 0..1, so raw
+      //     cosine (where 0.25 is noise) stops arm-wrestling normalized
+      //     tag sums on an uncalibrated shared scale.
+      //   noisy-OR blend: corroboration (tags AND semantics) outranks
+      //     either signal alone, instead of max() discarding the weaker.
+      //   identity floor: a direct name/alias mention is the strongest
+      //     retrieval signal the user can send — it must win the budget.
+      const T = cfg.fireThreshold || 1.0;
+      const wScore = c.weight_sum > 0 ? c.weight_sum / (c.weight_sum + T) : 0;
+      const semN = c.semScore > RAG_SEM_FLOOR
+        ? (c.semScore - RAG_SEM_FLOOR) / (1 - RAG_SEM_FLOOR) : 0;
+      let base = 1 - (1 - wScore) * (1 - semN);
+      if (c.triggers.has('identity')) base = Math.max(base, 0.7);
       if (tt === 'warmth' || tt === 'relational') base *= 0.6; // dampen sticky/expanded pulls
       const score = +(base * roleBoost(c.role)).toFixed(4);
 
@@ -5425,7 +5823,7 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
         continue;
       }
       spent += tokenCost;
-      injections.push({ entityId: r.id, text: injectText, tokenCost });
+      injections.push({ entityId: r.id, header: ragInjectionHeader(r.id, e), text: injectText, tokenCost });
       record.candidates.push(_ragCandRow(r, tokenCost, true, null, !!usePrinciples));
       // re-light warmth for anything actually included via a real fire
       if (r.tt === 'identity' || r.tt === 'thematic_cluster' || r.tt === 'semantic') {
@@ -5433,6 +5831,28 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
       }
     }
     record.budget.retrieval_tokens = spent;
+
+    // ---- Stage 2 handoff: compact summary for the 📖 chip ----
+    // Deposited only when the turn had candidates at all; consumed once by
+    // the send/reroll flow and pinned onto the assistant message. Kept
+    // tiny (ids + trigger + score + reason) because it persists with the
+    // thread — the full record still lives in telemetry.
+    if (record.candidates.length) {
+      _ragLastTurnSummary = {
+        t: record.turn_id,
+        spent,
+        aOn: !!record.config.embed_available,
+        pulled: record.candidates.filter(x => x.included).map(x => ({
+          id: x.cand_id, tt: x.trigger_type, s: x.score, tok: x.token_cost
+        })),
+        evicted: record.candidates.filter(x => !x.included).map(x => ({
+          id: x.cand_id, tt: x.trigger_type, why: x.eviction_reason || 'unknown'
+        })),
+        missing: record.flags.missing.slice(0, 8)
+      };
+    } else {
+      _ragLastTurnSummary = null;
+    }
 
     // ---- shadow: cheap counterfactuals from the SAME window ----
     const firedAt = (thr) => book.order.filter(id => weightSums[id] && weightSums[id].sum >= thr);
@@ -5738,7 +6158,8 @@ async function buildContextMessages(thread, card, opts) {
         const scrubbed = ragScrubWeightAnnotations(inj.text, allTerms);
         apiMessages.push({
           role: 'system',
-          content: '[Storybook: ' + inj.entityId + ']\n' + translateTemplates(scrubbed, charName, userName)
+          content: (inj.header || ('[Storybook: ' + inj.entityId + ']'))
+            + '\n' + translateTemplates(scrubbed, charName, userName)
         });
       }
     } catch (e) {
@@ -6368,6 +6789,11 @@ async function sendMessage(overrideContent) {
   renderAutoContinueIndicator();   // flip indicator to "generating post N…"
 
   const assistantMsg = { role: 'assistant', content: '', timestamp: Date.now() };
+  // Pin this turn's retrieval summary (deposited by runRetrieval inside
+  // buildContextMessages above) onto the reply — renderMessages draws the
+  // 📖 chip from it. Consume-once, so nothing stale can attach later.
+  const _ragSum = consumeRagTurnSummary();
+  if (_ragSum) assistantMsg.retrieval = _ragSum;
   thread.messages.push(assistantMsg);
   renderMessages();
   scrollToBottom();
@@ -6948,6 +7374,12 @@ async function regenerateFromThread(options = {}) {
     assistantMsg = { role: 'assistant', content: '', timestamp: Date.now() };
     thread.messages.push(assistantMsg);
   }
+  // Refresh the 📖 chip data for THIS generation — a reroll re-ran
+  // retrieval against the current window, so the previous variant's
+  // summary no longer describes what this reply was built from.
+  const _ragSum = consumeRagTurnSummary();
+  if (_ragSum) assistantMsg.retrieval = _ragSum;
+  else delete assistantMsg.retrieval;
   renderMessages();
   scrollToBottom();
   // New stream → follow it (mirrors sendMessage).
@@ -7838,6 +8270,36 @@ function renderLandingPage() {
     </div>`;
 }
 
+/* Stage 2 visibility: build the 📖 badge + collapsible details block from
+   the compact retrieval summary pinned on an assistant message. Answers
+   "what did the storybook actually do on this turn" without opening F12. */
+const RAG_TT_LABEL = { identity: 'name', thematic_cluster: 'theme', semantic: 'semantic', relational: 'relation', warmth: 'warm', manual: 'manual' };
+const RAG_WHY_LABEL = { budget: 'over budget', offscreen_suppressed: 'offscreen', no_payload: 'no prose' };
+function renderRagChip(m) {
+  const r = m && m.retrieval;
+  if (!r) return { badge: '', block: '' };
+  const pulled = Array.isArray(r.pulled) ? r.pulled : [];
+  const evicted = Array.isArray(r.evicted) ? r.evicted : [];
+  if (!pulled.length && !evicted.length) return { badge: '', block: '' };
+  const badge = `<span class="rag-badge" title="Storybook retrieval — ${pulled.length} pulled, ${evicted.length} passed over. Details in the 📖 block on this message.">&#128214; ${pulled.length}</span>`;
+  const row = (icon, id, meta, warn) =>
+    `<div class="rag-row${warn ? ' rag-warn' : ''}">${icon} <span class="rag-id">${escapeHtml(String(id))}</span> <span class="rag-meta">${escapeHtml(meta)}</span></div>`;
+  let rows = pulled.map(p =>
+    row('&#10003;', p.id, `${RAG_TT_LABEL[p.tt] || p.tt} · score ${Number(p.s || 0).toFixed(2)} · ~${p.tok || 0} tok`)).join('');
+  rows += evicted.map(x =>
+    row('&#10007;', x.id, `${RAG_TT_LABEL[x.tt] || x.tt} · ${RAG_WHY_LABEL[x.why] || x.why}`)).join('');
+  if (Array.isArray(r.missing) && r.missing.length) {
+    rows += row('&#9888;', 'unembeddable', r.missing.join(', ') + ' — check embed-server.log', true);
+  }
+  const aNote = r.aOn === false ? ' · semantic off' : '';
+  const block = `
+        <details class="rag-block">
+          <summary class="rag-summary">&#128214; Storybook — ${pulled.length} pulled · ${evicted.length} passed over · ~${r.spent || 0} tok${aNote}</summary>
+          <div class="rag-content">${rows}</div>
+        </details>`;
+  return { badge, block };
+}
+
 function renderMessages() {
   const container = document.getElementById('messages');
   const thread = getActiveThread();
@@ -8021,6 +8483,7 @@ function renderMessages() {
     const isCurrentlyGenerating = isGenerating && !isUser && i === thread.messages.length - 1;
     const showTypingDots = isCurrentlyGenerating && !m.content && !m.reasoning;
     const searchBadge = m.searchData ? '<span class="search-badge" title="Web search results attached">&#128269;</span>' : '';
+    const ragChip = !isUser ? renderRagChip(m) : { badge: '', block: '' };
     
     // Render search results as a visible, linkified block
     let searchBlock = '';
@@ -8074,9 +8537,9 @@ function renderMessages() {
         <div class="msg-header">
           <span class="msg-avatar">${avatar}</span>
           <span class="message-role">${roleLabel}</span>
-          ${searchBadge}
+          ${searchBadge}${ragChip.badge}
         </div>
-        ${cotBlock}
+        ${cotBlock}${ragChip.block}
         ${mainContent}
         <div class="message-actions">${actionsHtml}</div>
       </div>`;
