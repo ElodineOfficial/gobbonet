@@ -1455,7 +1455,7 @@ input[type="range"]::-moz-range-thumb {
    but this stamp still shows the old date, you're on a cached
    copy — hard-refresh (Ctrl+Shift+R) to bust it.
 ================================================================ */
-const CHAT_HTML_BUILD = '2026-07-12-rag-stage2-identity-fire';
+const CHAT_HTML_BUILD = '2026-07-12-rag-recency-echo';
 console.log(`%c[chat.html build] ${CHAT_HTML_BUILD}`, 'color:#0a0;font-weight:bold');
 
 /* ================================================================
@@ -4800,7 +4800,7 @@ async function runStorybookTestFire() {
   }
 
   const lines = [];
-  lines.push('fire threshold ' + T + '  \u00b7  same matcher as the live turn');
+  lines.push('fire threshold ' + T + '  \u00b7  same matcher as the live turn (sample = newest user message, full strength)');
   lines.push('');
   lines.push(fired.length ? 'FIRES (' + fired.length + '):\n  ' + fired.join('\n  ') : 'FIRES: none');
   if (near.length) {
@@ -5229,9 +5229,13 @@ function normalizeMessagesForStrictTemplates(messages) {
        hash), and cosine-scored against the recent window each turn.
        An entity's semantic score is the MAX over its segments, so
        long bios no longer silently fall off the embedder's context.
-     Retriever B — structured / weighted-tag. A pull fires when the
-       SUMMED weight of matched tags >= fire_threshold, OR when the
-       entity is named directly: the section title and any `aliases:`
+     Retriever B — structured / weighted-tag. The trigger surface is
+       recency-weighted: the newest message matches at full strength,
+       older window messages decay (RAG_RECENCY_WEIGHTS), and the
+       model's own messages count half (RAG_ECHO_DISCOUNT) — the model
+       echoing our injection back is not evidence. A pull fires when
+       the decayed SUM of matched tag weights >= fire_threshold, OR on
+       a FRESH identity hit: the section title and any `aliases:`
        terms act as implicit identity tags (title+blurb entries with
        zero authored tags now fire on their name — previously they
        were invisible to B). Subtree leaf names only count when the
@@ -5248,7 +5252,10 @@ function normalizeMessagesForStrictTemplates(messages) {
    the same 0..1 scale, and the two blend via noisy-OR so
    corroboration outranks either signal alone. Direct name/alias
    mentions get an identity score floor — if the user says "Selah",
-   Selah wins the budget. role_in_arcs still applies its priority
+   Selah wins the budget — but only while the mention is fresh (a
+   user message within the newest RAG_IDENTITY_FLOOR_MSGS); older or
+   model-echoed mentions decay into warmth instead of pinning the
+   floor forever. role_in_arcs still applies its priority
    boost AND its text now rides into the injection header so the
    model can see the entity's arc role.
 
@@ -5290,6 +5297,23 @@ const RAG_SEM_FLOOR = 0.25;
 const RAG_EMBED_SEG_TOKENS = 380;
 const RAG_EMBED_SEG_HARD = 440;
 const RAG_QUERY_TOKENS = 440;
+
+/* Recency/echo weighting of the trigger surface (Retriever B).
+   RAG_RECENCY_WEIGHTS: per-message match multiplier, newest → older;
+   windows longer than the table hold the last value (0.2). A term seen in
+   several window messages counts ONCE, at its strongest occurrence —
+   repetition across turns is not extra evidence.
+   RAG_ECHO_DISCOUNT: multiplier for assistant-authored messages. The model
+   repeating our own injection back at us is not evidence of anything, so
+   its words match at half strength.
+   RAG_IDENTITY_FLOOR_MSGS: how many of the newest messages can arm the
+   identity floor. A name/alias (or >= threshold tag) hit earns identity
+   status only from a USER message this fresh; staler mentions still add
+   their decayed weight but the entity fades into warmth instead of being
+   pinned at the top of the budget forever. */
+const RAG_RECENCY_WEIGHTS = [1.0, 0.6, 0.35, 0.2];
+const RAG_ECHO_DISCOUNT = 0.5;
+const RAG_IDENTITY_FLOOR_MSGS = 2;
 
 /* Compiled-regex cache for tag/name/alias terms. One matcher semantics
    everywhere (authored tags, implicit title terms, aliases) so the editor
@@ -5458,55 +5482,116 @@ function getCardStorybook(card) {
 
 /* THE shared Retriever-B matcher. Both the live retriever and the card
    editor's Test-fire box call this, so they can never drift apart.
-   Returns { id: { sum, matched:[{term,weight,implicit?}], identityHit,
+   `surface` is either a plain lowercased string (Test-fire box, shadow
+   probes — treated as ONE full-strength, identity-eligible segment) or an
+   array of window segments [{ text, mult, identityEligible }], one per
+   recent message, built where the live window is assembled (see
+   RAG_RECENCY_WEIGHTS / RAG_ECHO_DISCOUNT / RAG_IDENTITY_FLOOR_MSGS).
+   Returns { id: { sum, matched:[{term,weight,mult,implicit?}], identityHit,
    nameHit } } for EVERY entity/subtree (tag-less ones included — that is
    the point of the title fix).
 
-   Identity firing rules:
-   - Authored tag with weight >= fireThreshold matched → identityHit.
+   Recency/echo semantics:
+   - Each matched term contributes weight × mult of its STRONGEST matching
+     segment. A term seen in several messages counts once — repetition
+     across turns (e.g. the model echoing an injection) is not evidence,
+     so echoes cannot stack a term back over threshold.
+   - Assistant segments arrive pre-discounted (mult already includes
+     RAG_ECHO_DISCOUNT); this function just honors mult.
+
+   Identity firing rules (recency-gated):
+   - Authored tag with weight >= fireThreshold matched in an identity-
+     eligible segment (user message within the newest
+     RAG_IDENTITY_FLOOR_MSGS) → identityHit.
    - The section TITLE (leaf name, >= 3 chars) matched → implicit identity
-     tag worth fireThreshold, so a bare name mention fires on its own and
-     scales if the user raises the threshold. Subtree leaves only count
-     when the parent's name (or a parent alias) is ALSO in the window —
-     `reinhard.childhood` shouldn't fire on every stray "childhood".
-   - Any `aliases:` term matched → same as a title hit.
-   nameHit covers title OR alias and is what bypasses offscreen
-   suppression downstream. */
-function ragEntityHits(book, windowLower, cfg) {
+     tag worth fireThreshold × mult, so a bare name mention fires on its
+     own and scales if the user raises the threshold. Subtree leaves only
+     count when the parent's name (or a parent alias) is ALSO somewhere in
+     the window — `reinhard.childhood` shouldn't fire on every stray
+     "childhood".
+   - Any `aliases:` term matched → same as a title hit. Title + alias fold
+     into ONE implicit term (they are the same identity signal — two forms
+     of one name must not double-charge the sum).
+   - Title/alias hits OUTSIDE the eligible zone still add their decayed
+     weight to the sum but no longer confer identity status: the floor is
+     for a fresh, user-authored name; a stale one fades into warmth.
+   nameHit covers an identity-eligible title OR alias hit and is what
+   bypasses offscreen suppression downstream. */
+function ragEntityHits(book, surface, cfg) {
   const T = (cfg && cfg.fireThreshold) || 1.0;
+  const segs = (typeof surface === 'string')
+    ? [{ text: surface, mult: 1, identityEligible: true }]
+    : surface;
+  const allText = segs.map(s => s.text || '').join('\n');
+  // Best occurrence of a term across the segments: max mult, plus whether
+  // ANY matching segment is identity-eligible. null = matched nowhere.
+  // (ragTermRegex compiles without /g, so .test is stateless per segment.)
+  const probe = (term) => {
+    const re = ragTermRegex(term);
+    let hit = false, mult = 0, eligible = false;
+    for (const s of segs) {
+      if (!s.text || !re.test(s.text)) continue;
+      hit = true;
+      if (s.mult > mult) mult = s.mult;
+      if (s.identityEligible) eligible = true;
+    }
+    return hit ? { mult, eligible } : null;
+  };
   const hits = {};
   for (const id of book.order) {
     const e = book.entities[id];
     let sum = 0; const matched = []; let identityHit = false;
     for (const t of e.tags) {
-      if (ragTermRegex(t.term).test(windowLower)) {
-        matched.push({ term: t.term, weight: t.weight });
-        sum += t.weight;
-        if (t.weight >= T) identityHit = true;
+      const p = probe(t.term);
+      if (p) {
+        matched.push({ term: t.term, weight: t.weight, mult: p.mult });
+        sum += t.weight * p.mult;
+        if (t.weight >= T && p.eligible) identityHit = true;
       }
     }
     const leaf = id.split('.').pop();
-    let nameHit = false;
-    if (leaf.length >= 3 && ragTermRegex(leaf).test(windowLower)) {
-      if (e.kind === 'entity') {
-        nameHit = true;
-      } else {
-        const parentLeaf = (e.parent || '').split('.').pop();
-        const pe = book.entities[e.parent];
-        if (parentLeaf && ragTermRegex(parentLeaf).test(windowLower)) nameHit = true;
-        else if (pe && pe.aliases.some(a => a && ragTermRegex(a).test(windowLower))) nameHit = true;
+    let nameProbe = null;
+    if (leaf.length >= 3) {
+      const p = probe(leaf);
+      if (p) {
+        if (e.kind === 'entity') {
+          nameProbe = p;
+        } else {
+          // Subtree disambiguation: the parent must be mentioned SOMEWHERE
+          // in the window (any segment) — it is a gate, not a signal, so it
+          // is not recency-weighted.
+          const parentLeaf = (e.parent || '').split('.').pop();
+          const pe = book.entities[e.parent];
+          if (parentLeaf && ragTermRegex(parentLeaf).test(allText)) nameProbe = p;
+          else if (pe && pe.aliases.some(a => a && ragTermRegex(a).test(allText))) nameProbe = p;
+        }
       }
     }
-    let aliasHit = '';
+    let aliasProbe = null, aliasTerm = '';
     for (const a of e.aliases) {
-      if (a && ragTermRegex(a).test(windowLower)) { aliasHit = a; break; }
+      if (!a) continue;
+      const p = probe(a);
+      if (p && (!aliasProbe || p.mult > aliasProbe.mult)) { aliasProbe = p; aliasTerm = a; }
     }
-    if (nameHit || aliasHit) {
-      identityHit = true;
-      matched.push({ term: aliasHit || leaf, weight: T, implicit: true });
-      sum += T;
+    // Fold title + alias into one implicit identity term at the strongest
+    // occurrence; identity eligibility merges across both (the entity was
+    // freshly named either way).
+    let idProbe = null, idTerm = leaf;
+    if (nameProbe) idProbe = { mult: nameProbe.mult, eligible: nameProbe.eligible };
+    if (aliasProbe) {
+      if (!idProbe) { idProbe = { mult: aliasProbe.mult, eligible: aliasProbe.eligible }; idTerm = aliasTerm; }
+      else {
+        if (aliasProbe.mult >= idProbe.mult) { idProbe.mult = aliasProbe.mult; idTerm = aliasTerm; }
+        idProbe.eligible = idProbe.eligible || aliasProbe.eligible;
+      }
     }
-    hits[id] = { sum, matched, identityHit, nameHit: nameHit || !!aliasHit };
+    let nameHit = false;
+    if (idProbe) {
+      matched.push({ term: idTerm, weight: T, implicit: true, mult: idProbe.mult });
+      sum += T * idProbe.mult;
+      if (idProbe.eligible) { identityHit = true; nameHit = true; }
+    }
+    hits[id] = { sum, matched, identityHit, nameHit };
   }
   return hits;
 }
@@ -5775,7 +5860,10 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
       semantic_backstop: !!cfg.semanticBackstop,
       embed_available: false,          // set true below if a query embed succeeds
       top_k_a: cfg.topKA,
-      retrieval_budget_tokens: cfg.retrievalBudgetTokens
+      retrieval_budget_tokens: cfg.retrievalBudgetTokens,
+      recency_weights: RAG_RECENCY_WEIGHTS.slice(),
+      echo_discount: RAG_ECHO_DISCOUNT,
+      identity_floor_msgs: RAG_IDENTITY_FLOOR_MSGS
     },
     window: { messages_scanned: 0, tokens_scanned: 0, hash: '' },
     budget: budgetSnapshot,
@@ -5820,7 +5908,25 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
     const live = thread.messages.filter(m => !m.archived);
     const win = live.slice(-Math.max(1, cfg.retrievalWindowMsgs || 4));
     const windowText = win.map(m => m.content || m.reasoning || '').join('\n');
-    const windowLower = windowText.toLowerCase();
+    // Recency-weighted, role-aware segments for Retriever B. The newest
+    // message matches at full strength; older ones decay per
+    // RAG_RECENCY_WEIGHTS, and the model's own messages are discounted by
+    // RAG_ECHO_DISCOUNT — the model repeating our injection back at us is
+    // not evidence of anything. identityEligible marks the segments
+    // (user-authored, within the newest RAG_IDENTITY_FLOOR_MSGS) where a
+    // name/alias mention still earns the identity floor; anywhere older it
+    // just adds decayed weight and the entity fades into warmth instead of
+    // being pinned at the top of the budget.
+    const winSegs = win.map((m, i) => {
+      const age = win.length - 1 - i; // 0 = newest
+      const rw = RAG_RECENCY_WEIGHTS[Math.min(age, RAG_RECENCY_WEIGHTS.length - 1)];
+      const echo = m.role === 'assistant' ? RAG_ECHO_DISCOUNT : 1;
+      return {
+        text: String(m.content || m.reasoning || '').toLowerCase(),
+        mult: rw * echo,
+        identityEligible: age < RAG_IDENTITY_FLOOR_MSGS && m.role !== 'assistant'
+      };
+    });
     record.window.messages_scanned = win.length;
     record.window.tokens_scanned = estimateTokens(windowText);
     record.window.hash = 'fnv:' + ragHash(windowText);
@@ -5847,10 +5953,15 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
 
     // ---- Retriever B: weighted-tag + identity-name firing ----
     if (cfg.retrieverB) {
-      weightSums = ragEntityHits(book, windowLower, cfg);
+      weightSums = ragEntityHits(book, winSegs, cfg);
       for (const id of book.order) {
         const ws = weightSums[id];
-        if (!ws || ws.sum < cfg.fireThreshold) continue;
+        // Fire on the decayed weight-sum crossing threshold, OR on a fresh
+        // identity hit: a name spoken in the newest message-or-two must
+        // fire even when its recency-decayed sum alone falls short (a name
+        // in the 2nd-newest user message contributes only 0.6 × T). This
+        // is the identity floor's entry point.
+        if (!ws || (ws.sum < cfg.fireThreshold && !ws.identityHit)) continue;
         const c = touch(id);
         c.matched_tags = ws.matched;
         c.weight_sum = ws.sum;
@@ -5968,8 +6079,12 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
       //     tag sums on an uncalibrated shared scale.
       //   noisy-OR blend: corroboration (tags AND semantics) outranks
       //     either signal alone, instead of max() discarding the weaker.
-      //   identity floor: a direct name/alias mention is the strongest
-      //     retrieval signal the user can send — it must win the budget.
+      //   identity floor: a FRESH direct name/alias mention (user message
+      //     within the newest RAG_IDENTITY_FLOOR_MSGS — gated upstream in
+      //     ragEntityHits) is the strongest retrieval signal the user can
+      //     send — it must win the budget. Stale or model-echoed mentions
+      //     no longer arm the floor; they contribute decayed weight and
+      //     the entity fades into warmth.
       const T = cfg.fireThreshold || 1.0;
       const wScore = c.weight_sum > 0 ? c.weight_sum / (c.weight_sum + T) : 0;
       const semN = c.semScore > RAG_SEM_FLOOR
@@ -6056,7 +6171,10 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
     }
 
     // ---- shadow: cheap counterfactuals from the SAME window ----
-    const firedAt = (thr) => book.order.filter(id => weightSums[id] && weightSums[id].sum >= thr);
+    // Mirrors the live fire rule: a fresh identity hit fires at ANY
+    // threshold, so it appears in every counterfactual too.
+    const firedAt = (thr) => book.order.filter(id => weightSums[id]
+      && (weightSums[id].sum >= thr || weightSums[id].identityHit));
     const baseFired = firedAt(cfg.fireThreshold);
     const tokAt = (ids) => ids.reduce((n, id) => {
       const e = book.entities[id]; return n + (e && e.prose ? estimateTokens(e.prose) + 4 : 0);
