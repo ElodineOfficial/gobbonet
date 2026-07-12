@@ -1046,6 +1046,26 @@ input[type="range"]::-moz-range-thumb {
         </div>
 
         <div style="margin-top:14px;padding-top:10px;border-top:1px dashed rgba(255,255,255,0.08);">
+          <label style="color:var(--cyan-dim);font-size:12px;letter-spacing:0.5px;">Response Length — soft budget</label>
+          <div class="form-hint" style="margin-top:2px;margin-bottom:10px;">One dial, two mechanisms. A hidden reminder rides next to your latest message asking the model to write about this much (the <em>target</em>), and anything that overruns the budget is stopped at the next clean sentence or paragraph end and trimmed there (the <em>ceiling</em>) — never mid-word. In RP, a reply that halts on an open beat is a feature: it hands the scene back to you. Thinking models are unaffected in their reasoning — only the visible reply is metered, so this is safe on every model family. 0 = off.</div>
+          <div class="form-row">
+            <div class="form-group" style="flex:1;">
+              <label for="card-resp-tokens">Reply Budget (tokens)</label>
+              <input type="range" id="card-resp-tokens" min="0" max="800" step="20" value="0" oninput="document.getElementById('card-resp-tokens-val').textContent=(this.value==0?'Off':this.value)">
+              <div class="form-hint" style="display:flex;justify-content:space-between;"><span>Off 0</span><span id="card-resp-tokens-val">Off</span><span>800</span></div>
+            </div>
+            <div class="form-group" style="flex:1;">
+              <label for="card-resp-boundary">Finish At</label>
+              <select id="card-resp-boundary">
+                <option value="sentence">End of sentence</option>
+                <option value="paragraph">End of paragraph</option>
+              </select>
+              <div class="form-hint">Where overflow past the budget gets cut. Sentence is tightest; paragraph lets the current block finish first.</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:14px;padding-top:10px;border-top:1px dashed rgba(255,255,255,0.08);">
           <label style="color:var(--cyan-dim);font-size:12px;letter-spacing:0.5px;">Advanced — XTC &amp; DRY</label>
           <div class="form-hint" style="margin-top:2px;margin-bottom:10px;">Force exploration (XTC) and block phrase repetition (DRY). Especially useful for confident models that stay rigid even when temperature alone is turned up.</div>
 
@@ -2678,7 +2698,13 @@ const DEFAULT_CARD = {
   xtcThreshold: 0.1,
   dryMultiplier: 0,
   bannedPhrases: '',
-  logitBiasStrength: -20
+  logitBiasStrength: -20,
+  // Response-length governor — 0 = off. When set, a hidden nudge in the
+  // recency slot asks the model for roughly this many tokens, and anything
+  // that overruns the budget is stopped/trimmed at the next clean sentence
+  // or paragraph boundary instead of mid-word. See RESPONSE LENGTH GOVERNOR.
+  respTokens: 0,
+  respBoundary: 'sentence'
 };
 const DEFAULT_SETTINGS = {
   modelName: 'auto',
@@ -4396,6 +4422,181 @@ function resetCarouselIndex() {
     if (card) { card.carouselIndex = 0; saveState(); }
   }
   updateCarouselCounter(null);
+}
+
+/* ================================================================
+   RESPONSE LENGTH GOVERNOR
+   ----------------------------------------------------------------
+   "Nudge as target, boundary as ceiling." Two halves, one per-card
+   dial (respTokens; respBoundary = 'sentence' | 'paragraph'):
+
+     1. TARGET — buildLengthNudgeLine() emits a hidden system line
+        in the recency slot (right before the last user message,
+        same trick as the carousel) asking the model for roughly
+        the budget. Prompt-side shaping; most models mostly obey,
+        and because the line rides the recency slot it never drifts
+        away from the generation point as the chat grows — unlike a
+        length rule parked in the writing style up top.
+
+     2. CEILING — while streaming, governorWantsCut() watches the
+        VISIBLE reply. Once the estimate passes the budget AND a
+        clean boundary exists, the stream is aborted (llama-server
+        cancels the slot on disconnect — same mechanism as the Stop
+        button), and applyResponseLengthTrim() lands the final text
+        exactly on that boundary. The trim also runs on natural
+        EOS finishes, so a model that ignores the nudge and writes
+        three paragraphs still comes out at the first boundary past
+        the budget. Never a mid-word clip: overflow runs to the end
+        of the sentence/paragraph it started, then stops there.
+
+   Why not max_tokens? Two reasons. It clips MID-SENTENCE (the
+   model can't see the cap, so it can't plan around it), and on
+   thinking models it counts REASONING tokens too — a tight cap
+   would blank the visible reply entirely. This governor meters
+   msg.content only: reasoning streams free on every family, and
+   the cut always lands on punctuation. A reply that halts on an
+   open beat mid-scene is deliberate — it hands the moment back to
+   the user.
+
+   Sizes are estimateTokens() words-based approximations — exactly
+   as accurate as the rest of the context budgeter, and the
+   boundary snap makes token-perfect accounting unnecessary.
+================================================================ */
+
+// Overflow allowance past the budget while we wait for a boundary to
+// appear. A long RP sentence runs ~40 tokens, so 128 covers several;
+// paragraphs need more room to close. Past budget+grace with still no
+// boundary, we cut anyway and fall back to the last sentence end.
+const RESP_GOVERNOR_GRACE = { sentence: 128, paragraph: 256 };
+
+// Words that end with a period WITHOUT ending a sentence. Single-letter
+// initials ("J. Doe") and dotted latinisms ("e.g.", "i.e.") are caught
+// separately by the one-letter rule in findSentenceEnds.
+const RESP_ABBREVIATIONS = new Set([
+  'mr', 'mrs', 'ms', 'dr', 'prof', 'sr', 'jr', 'st', 'vs', 'etc',
+  'lt', 'sgt', 'capt', 'col', 'gen', 'approx', 'dept', 'inc'
+]);
+
+function createResponseGovernor(card) {
+  card = card || getActiveCard();
+  const target = Number(card && card.respTokens) || 0;
+  if (!(target > 0)) return null;
+  const boundary = card.respBoundary === 'paragraph' ? 'paragraph' : 'sentence';
+  return { target, boundary, grace: RESP_GOVERNOR_GRACE[boundary], fired: false };
+}
+
+/**
+ * All indices in `text` where a sentence cleanly ends: a run of .!?…
+ * plus any trailing closers (quotes, asterisks, brackets, ~), followed
+ * by whitespace or end-of-text. The whitespace requirement kills
+ * decimals ("3.5"), filenames, and URLs for free. Returned indices are
+ * exclusive slice ends — text.slice(0, idx) is a complete sentence.
+ */
+function findSentenceEnds(text) {
+  const ends = [];
+  const re = /[.!?…]+["'”’)\]*~]*/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const end = m.index + m[0].length;
+    if (end < text.length && !/\s/.test(text[end])) continue;
+    const wordMatch = text.slice(0, m.index).match(/([A-Za-z]+)$/);
+    if (wordMatch && m[0][0] === '.') {
+      const w = wordMatch[1].toLowerCase();
+      if (RESP_ABBREVIATIONS.has(w)) continue;   // "Dr." "vs." ...
+      if (w.length === 1) continue;              // initials, "e.g.", "i.e."
+    }
+    ends.push(end);
+  }
+  return ends;
+}
+
+/** Paragraph boundaries: cut BEFORE each newline (slice end excludes it). */
+function findParagraphEnds(text) {
+  const ends = [];
+  const re = /\n/g;
+  let m;
+  while ((m = re.exec(text)) !== null) ends.push(m.index);
+  return ends;
+}
+
+/**
+ * First boundary at/after the token budget, or -1 while none exists.
+ * interiorOnly (streaming) skips a boundary sitting at the very edge of
+ * the text — the next delta may extend it (`."` split across chunks, or
+ * a decimal still being typed), so we wait one delta to confirm. If the
+ * model EOSes right there instead, the normal finish path handles it.
+ * O(boundaries × estimate) — the text is one reply, this is nothing.
+ */
+function findRespCutIndex(text, targetTokens, boundary, interiorOnly) {
+  const ends = boundary === 'paragraph' ? findParagraphEnds(text) : findSentenceEnds(text);
+  for (const end of ends) {
+    if (interiorOnly && end >= text.length) continue;
+    if (estimateTokens(text.slice(0, end)) >= targetTokens) return end;
+  }
+  return -1;
+}
+
+/**
+ * Streaming check: true once we're past the budget AND either a clean
+ * interior boundary exists (normal case) or we've overshot budget+grace
+ * with no boundary at all (runaway run-on — cut anyway; the trim falls
+ * back to the last sentence end). One-shot per generation via gov.fired.
+ * Content-only by construction: during a thinking phase msg.content is
+ * empty, so reasoning never counts against the budget.
+ */
+function governorWantsCut(gov, msg) {
+  if (!gov || gov.fired) return false;
+  const text = msg && msg.content;
+  if (!text) return false;
+  const toks = estimateTokens(text);
+  if (toks < gov.target) return false;
+  if (findRespCutIndex(text, gov.target, gov.boundary, true) >= 0 || toks >= gov.target + gov.grace) {
+    gov.fired = true;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Enforcement half — runs on the FINAL text (post-finalizeStreamMessage,
+ * so marker scrubbing can't shift the cut) for clean finishes and
+ * governor stops alike. No-op when the reply is already within budget,
+ * when the governor is off, or when no safe cut exists.
+ */
+function applyResponseLengthTrim(msg, card) {
+  const gov = createResponseGovernor(card);
+  if (!gov || !msg || !msg.content) return;
+  const text = msg.content;
+  let cut = findRespCutIndex(text, gov.target, gov.boundary, false);
+  if (cut < 0) {
+    // No boundary at/after the budget. Only intervene on a true runaway;
+    // a reply that landed inside the grace zone keeps its own ending.
+    if (estimateTokens(text) < gov.target + gov.grace) return;
+    const ends = findSentenceEnds(text);
+    if (!ends.length) return;              // one unbroken run — leave it
+    cut = ends[ends.length - 1];
+  }
+  if (cut >= text.length) return;          // boundary IS the ending — nothing past it
+  const removed = text.length - cut;
+  msg.content = text.slice(0, cut).replace(/\s+$/, '');
+  console.log(`[length] Soft cap ${gov.target} tok (${gov.boundary} mode) — trimmed ${removed} overflow chars at the boundary.`);
+}
+
+/**
+ * The "target" half: hidden nudge text for the recency slot, or '' when
+ * the governor is off. The budget is translated into plain English —
+ * "~140 tokens" means nothing to a model; "a short paragraph" does.
+ */
+function buildLengthNudgeLine(card) {
+  const gov = createResponseGovernor(card);
+  if (!gov) return '';
+  let label;
+  if (gov.target <= 60)       label = 'one or two sentences';
+  else if (gov.target <= 120) label = 'two or three sentences';
+  else if (gov.target <= 220) label = 'a short paragraph';
+  else if (gov.target <= 400) label = 'a paragraph or two';
+  else                        label = 'a few short paragraphs';
+  return '[Response length]\nKeep this reply to about ' + label + '. Stop at a natural beat instead of resolving everything — leaving the moment open gives {{user}} room to act.';
 }
 
 /**
@@ -6178,9 +6379,26 @@ async function buildContextMessages(thread, card, opts) {
     saveState();
   }
 
+  // Response-length nudge — the "target" half of the governor (the
+  // boundary trim after streaming is the "ceiling" half). Injected in the
+  // recency slot right before the LAST USER message, same trick as the
+  // carousel. Keyed on the last user-role index rather than isLastUserMsg
+  // so REROLLS — where a cleared assistant slot trails the user turn —
+  // still get the nudge.
+  const lengthNudge = buildLengthNudgeLine(card);
+  let lastUserIdx = -1;
+  if (lengthNudge) {
+    for (let i = finalRecent.length - 1; i >= 0; i--) {
+      if (finalRecent[i].role === 'user') { lastUserIdx = i; break; }
+    }
+  }
+
   for (let i = 0; i < finalRecent.length; i++) {
     const m = finalRecent[i];
     const isLastUserMsg = m.role === 'user' && i === finalRecent.length - 1;
+    if (lengthNudge && i === lastUserIdx) {
+      apiMessages.push({ role: 'system', content: translateTemplates(lengthNudge, charName, userName) });
+    }
     // Just before the final user turn, in ascending priority: the optional
     // per-response narrative nudge, then the USER's persona LAST so it sits
     // immediately against the user message (recency = highest weight). The
@@ -6813,6 +7031,13 @@ async function sendMessage(overrideContent) {
   try {
     const logitBiasParams = await buildLogitBias(card);
     const _stopParams = getStopStrings();
+    // Length governor — watches the VISIBLE reply as it streams and stops
+    // generation at the first clean boundary past the card's soft budget.
+    // max_tokens stays -1 below on purpose: a server-side cap counts
+    // THINKING tokens too, so a tight value would blank out reasoning
+    // models — and it clips mid-word besides. Only content is metered
+    // here; reasoning streams free. See RESPONSE LENGTH GOVERNOR.
+    const respGovernor = createResponseGovernor(card);
     console.log('[gen] family=' + ((activeModel && activeModel.family) || 'unknown') +
                 ' stop=' + JSON.stringify(_stopParams.stop || []) +
                 '  (run gobboDiag() to dump the exact prompt the model receives)');
@@ -6856,6 +7081,14 @@ async function sendMessage(overrideContent) {
           console.log('[stream] Unparsed line ' + chunkCount + ':', JSON.stringify(line.trim().slice(0, 200)));
         }
       }
+      // Soft budget reached AND a clean boundary exists — stop paying for
+      // tokens the boundary trim would discard anyway. The abort lands in
+      // the catch below as a designed stop (_lengthCut), not an error.
+      if (respGovernor && abortController && governorWantsCut(respGovernor, assistantMsg)) {
+        console.log('[length] Boundary past soft cap — stopping generation early.');
+        abortController._lengthCut = true;
+        abortController.abort();
+      }
       // Live render tokens as they arrive (throttled to ~80ms).
       // Uses surgical DOM patching to avoid full innerHTML replace and flicker.
       const now = Date.now();
@@ -6895,7 +7128,13 @@ async function sendMessage(overrideContent) {
   } catch (err) {
     sendErrored = true;
     if (err.name === 'AbortError') {
-      if (abortController && abortController._cotCulled) {
+      if (abortController && abortController._lengthCut) {
+        // Governor stop — a designed finish, not an error. Flush the parser
+        // now (the in-try finalize was skipped by the abort); the boundary
+        // trim in the settle block below lands the text on the cut.
+        sendErrored = false;
+        finalizeStreamMessage(assistantMsg);
+      } else if (abortController && abortController._cotCulled) {
         const mins = state.settings.cotTimeoutMinutes || 2;
         assistantMsg.content += `\n\n*(auto-stopped — runtime exceeded ${mins} min limit. If this happens often, raise the timer in CONFIG.)*`;
       } else {
@@ -6913,6 +7152,12 @@ async function sendMessage(overrideContent) {
       assistantMsg.content = diag;
     }
   }
+
+  // Length governor, enforcement half: land the final text on the boundary.
+  // Runs on clean finishes AND governor stops. Skipped when the user hit
+  // Stop or the request errored — their partial (plus its status note) is
+  // left exactly as-is.
+  if (!sendErrored) applyResponseLengthTrim(assistantMsg, card);
 
   clearCotWatchdog();
   isGenerating = false;
@@ -7389,9 +7634,16 @@ async function regenerateFromThread(options = {}) {
   abortController = new AbortController();
   startCotWatchdog();
 
+  // Set when the stream ends on a user Stop, watchdog cull, or hard error —
+  // those finishes keep their partial text (and status note) untrimmed.
+  let hardStop = false;
+
   try {
     const logitBiasParams = await buildLogitBias(card);
     const _stopParams = getStopStrings();
+    // Length governor — see the full note in sendMessage. max_tokens stays
+    // -1; the visible reply is metered client-side instead.
+    const respGovernor = createResponseGovernor(card);
     console.log('[gen] family=' + ((activeModel && activeModel.family) || 'unknown') +
                 ' stop=' + JSON.stringify(_stopParams.stop || []) +
                 '  (run gobboDiag() to dump the exact prompt the model receives)');
@@ -7418,6 +7670,13 @@ async function regenerateFromThread(options = {}) {
         const result = extractTokenFromLine(line);
         if (result) processStreamDelta(assistantMsg, result.text, result.field);
       }
+      // Soft budget reached AND a clean boundary exists — stop early; the
+      // trim below lands the text on the boundary. See sendMessage.
+      if (respGovernor && abortController && governorWantsCut(respGovernor, assistantMsg)) {
+        console.log('[length] Boundary past soft cap — stopping generation early.');
+        abortController._lengthCut = true;
+        abortController.abort();
+      }
       const now = Date.now();
       if (now - lastRender > 80) {
         renderStreamingUpdate(assistantMsg);
@@ -7432,19 +7691,31 @@ async function regenerateFromThread(options = {}) {
     }
   } catch (err) {
     if (err.name === 'AbortError') {
-      if (abortController && abortController._cotCulled) {
+      if (abortController && abortController._lengthCut) {
+        // Governor stop — designed finish. finalizeStreamMessage below
+        // flushes the parser; the trim after it lands on the boundary.
+      } else if (abortController && abortController._cotCulled) {
         const mins = state.settings.cotTimeoutMinutes || 2;
         assistantMsg.content += `\n\n*(auto-stopped — runtime exceeded ${mins} min limit. If this happens often, raise the timer in CONFIG.)*`;
+        hardStop = true;
       } else {
         assistantMsg.content += '\n\n*(generation stopped)*';
+        hardStop = true;
       }
     } else {
       assistantMsg.content = `**Error:** ${err.message}`;
+      hardStop = true;
     }
   }
 
   // Flush parser state and scrub any format-specific stray markers
   finalizeStreamMessage(assistantMsg);
+
+  // Length governor, enforcement half — must run BEFORE syncActiveVariant
+  // below so the variant slot stores the trimmed text, not the overflow.
+  // Skipped on user Stop / watchdog cull / error (hardStop): those keep
+  // their partial text and status note exactly as-is.
+  if (!hardStop) applyResponseLengthTrim(assistantMsg, card);
 
   // If this message has a variants array (i.e. the user has rerolled
   // it at least once), persist the just-streamed content into the
@@ -9278,6 +9549,11 @@ function editCard(id) {
   document.getElementById('card-xtc-threshold-val').textContent = xtcThr;
   document.getElementById('card-dry-mult').value = dryMult;
   document.getElementById('card-dry-mult-val').textContent = dryMult;
+  // Response-length governor (default off for cards saved before it existed)
+  const respTok = card.respTokens !== undefined ? card.respTokens : 0;
+  document.getElementById('card-resp-tokens').value = respTok;
+  document.getElementById('card-resp-tokens-val').textContent = (respTok == 0 ? 'Off' : respTok);
+  document.getElementById('card-resp-boundary').value = card.respBoundary === 'paragraph' ? 'paragraph' : 'sentence';
   // Banned phrases / logit bias
   document.getElementById('card-banned-phrases').value = card.bannedPhrases || '';
   const lbStrength = card.logitBiasStrength !== undefined ? card.logitBiasStrength : -20;
@@ -9335,6 +9611,8 @@ function saveCard() {
   card.xtcProbability = safeParse(document.getElementById('card-xtc-prob').value, 0);
   card.xtcThreshold = safeParse(document.getElementById('card-xtc-threshold').value, 0.1);
   card.dryMultiplier = safeParse(document.getElementById('card-dry-mult').value, 0);
+  card.respTokens = safeParse(document.getElementById('card-resp-tokens').value, 0, true);
+  card.respBoundary = document.getElementById('card-resp-boundary').value === 'paragraph' ? 'paragraph' : 'sentence';
   card.bannedPhrases = document.getElementById('card-banned-phrases').value;
   card.logitBiasStrength = safeParse(document.getElementById('card-logit-strength').value, -20);
   card.carouselEnabled = document.getElementById('card-carousel-enabled').checked;
