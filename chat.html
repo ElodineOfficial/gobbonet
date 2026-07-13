@@ -149,6 +149,16 @@
 }
 .memory-btn:hover { opacity: 1; }
 
+/* Response-timer chip in the message header. Tabular numerals so the
+   live tick doesn't jitter the header width while streaming. */
+.gen-time {
+  font-size: 11px;
+  opacity: 0.55;
+  margin-left: 6px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Custom macro rows in MODS modal */
 .macro-row {
   display: flex;
@@ -1499,7 +1509,7 @@ input[type="range"]::-moz-range-thumb {
    but this stamp still shows the old date, you're on a cached
    copy — hard-refresh (Ctrl+Shift+R) to bust it.
 ================================================================ */
-const CHAT_HTML_BUILD = '2026-07-12-rag-story-memory';
+const CHAT_HTML_BUILD = '2026-07-12-response-timer';
 console.log(`%c[chat.html build] ${CHAT_HTML_BUILD}`, 'color:#0a0;font-weight:bold');
 
 /* ================================================================
@@ -7515,6 +7525,11 @@ async function sendMessage(overrideContent) {
   // again; if not, it stays cleared and no banner renders.
   pendingLoreCompressionNote = null;
 
+  // Response timer: the clock starts the moment the send is committed —
+  // context build (compression, retrieval) counts, because the user is
+  // already waiting through it.
+  startGenClock();
+
   let thread = getActiveThread();
   if (!thread) {
     createThread();
@@ -7677,6 +7692,7 @@ async function sendMessage(overrideContent) {
         chunkCount++;
         const result = extractTokenFromLine(line);
         if (result) {
+          markGenFirstToken();   // response timer: first-token latency
           processStreamDelta(assistantMsg, result.text, result.field);
         } else if (chunkCount <= 3) {
           console.log('[stream] Unparsed line ' + chunkCount + ':', JSON.stringify(line.trim().slice(0, 200)));
@@ -7763,6 +7779,7 @@ async function sendMessage(overrideContent) {
   clearCotWatchdog();
   isGenerating = false;
   abortController = null;
+  finishGenClock(assistantMsg);   // lands m.genMs/m.ttftMs before the save below
   saveState();
   // The turn has settled (content is final, even on abort/error). Push to the
   // server backup NOW instead of waiting out the 2s debounce — if the user
@@ -8041,6 +8058,11 @@ function syncActiveVariant(msg) {
   v.attachmentText = msg.attachmentText;
   v.attachments    = msg.attachments;
   v.timestamp  = msg.timestamp || v.timestamp || Date.now();
+  // Response-timer fields ride with the variant so the ◀ ▶ navigator shows
+  // the time the DISPLAYED reply actually took, not whichever reroll
+  // happened to run last.
+  v.genMs  = msg.genMs;
+  v.ttftMs = msg.ttftMs;
 }
 
 /** Mirror the active variant's fields back onto the top-level message. */
@@ -8070,6 +8092,10 @@ function applyVariantToMessage(msg) {
     delete msg.attachments;
   }
   if (v.timestamp) msg.timestamp = v.timestamp;
+  // Delete-when-absent, same as the fields above: a variant recorded
+  // before the timer existed shouldn't inherit another variant's numbers.
+  if (isFinite(v.genMs) && v.genMs > 0) msg.genMs = v.genMs; else delete msg.genMs;
+  if (isFinite(v.ttftMs) && v.ttftMs > 0) msg.ttftMs = v.ttftMs; else delete msg.ttftMs;
 }
 
 /**
@@ -8178,6 +8204,10 @@ async function regenerateFromThread(options = {}) {
   // Same reset as sendMessage — fresh turn starts without a stale marker.
   pendingLoreCompressionNote = null;
 
+  // Response timer — same semantics as sendMessage: from the reroll /
+  // scheduled trigger to settle, everything the user waits through.
+  startGenClock();
+
   const card = getActiveCard();
 
   // Optional web search — used by scheduler
@@ -8269,7 +8299,7 @@ async function regenerateFromThread(options = {}) {
       buffer = lines.pop() || '';
       for (const line of lines) {
         const result = extractTokenFromLine(line);
-        if (result) processStreamDelta(assistantMsg, result.text, result.field);
+        if (result) { markGenFirstToken(); processStreamDelta(assistantMsg, result.text, result.field); }
       }
       // Soft budget reached AND a clean boundary exists — stop early; the
       // trim below lands the text on the boundary. See sendMessage.
@@ -8317,6 +8347,10 @@ async function regenerateFromThread(options = {}) {
   // Skipped on user Stop / watchdog cull / error (hardStop): those keep
   // their partial text and status note exactly as-is.
   if (!hardStop) applyResponseLengthTrim(assistantMsg, card);
+
+  // Response timer: land m.genMs/m.ttftMs BEFORE the variant sync below,
+  // so the active slot captures this generation's numbers.
+  finishGenClock(assistantMsg);
 
   // If this message has a variants array (i.e. the user has rerolled
   // it at least once), persist the just-streamed content into the
@@ -9142,6 +9176,78 @@ function renderLandingPage() {
     </div>`;
 }
 
+/* ================================================================
+   RESPONSE TIMER
+   Wall-clock from the moment a generation is committed (send click,
+   reroll, scheduled fire) to the moment it settles. Context build —
+   compression, retrieval — counts, because the user is already
+   waiting through it; so do prompt processing and streaming. The
+   result lives on the message (m.genMs, m.ttftMs), so history keeps
+   its numbers across reloads; the chip tooltip carries first-token
+   latency and a rough tokens/sec.
+================================================================ */
+let _genClock = null;   // { start, ttft, interval } — one generation at a time (isGenerating gate)
+
+function fmtGenTime(ms) {
+  if (!isFinite(ms) || ms < 0) return '';
+  if (ms < 10000) return (ms / 1000).toFixed(1) + 's';
+  const total = Math.round(ms / 1000);
+  if (total < 60) return total + 's';
+  return Math.floor(total / 60) + 'm ' + String(total % 60).padStart(2, '0') + 's';
+}
+
+function startGenClock() {
+  if (_genClock && _genClock.interval) clearInterval(_genClock.interval);
+  _genClock = { start: Date.now(), ttft: 0, interval: null };
+  // Live tick: updates the streaming message's chip in place. Full
+  // re-renders during the stream re-create the element (the template
+  // renders it whenever isGenerating points at that message), so the
+  // interval just keeps whatever instance currently exists fresh.
+  _genClock.interval = setInterval(() => {
+    const el = document.getElementById('gen-clock-live');
+    if (el && _genClock) el.textContent = '\u23F1 ' + fmtGenTime(Date.now() - _genClock.start);
+  }, 250);
+}
+
+function markGenFirstToken() {
+  if (_genClock && !_genClock.ttft) _genClock.ttft = Date.now();
+}
+
+function finishGenClock(m) {
+  const c = _genClock;
+  _genClock = null;
+  if (!c) return;
+  if (c.interval) clearInterval(c.interval);
+  if (!m) return;
+  m.genMs = Date.now() - c.start;
+  if (c.ttft) m.ttftMs = c.ttft - c.start;
+  else delete m.ttftMs;   // stopped before any token arrived — no latency to report
+}
+
+/* The header chip. live=true renders the ticking element for the message
+   currently streaming; otherwise a static chip for any message that
+   carries a recorded time. Old messages without genMs render nothing. */
+function renderGenTime(m, live) {
+  if (live) {
+    const now = _genClock ? '\u23F1 ' + fmtGenTime(Date.now() - _genClock.start) : '\u23F1 \u2026';
+    return `<span class="gen-time" id="gen-clock-live" title="Elapsed since send — ticking until the response settles">${now}</span>`;
+  }
+  if (!m || !isFinite(m.genMs) || m.genMs <= 0) return '';
+  const bits = [];
+  if (isFinite(m.ttftMs) && m.ttftMs > 0) bits.push('first token ' + fmtGenTime(m.ttftMs));
+  const toks = estimateTokens((m.content || '') + (m.reasoning || ''));
+  if (toks > 0) {
+    bits.push('~' + toks + ' tok');
+    const genSec = (m.genMs - (m.ttftMs || 0)) / 1000;
+    if (genSec > 0.2) {
+      const rate = toks / genSec;
+      bits.push((rate < 10 ? rate.toFixed(1) : Math.round(rate)) + ' tok/s');
+    }
+  }
+  const tip = bits.length ? bits.join(' \u00b7 ') : 'total response time';
+  return `<span class="gen-time" title="${escapeHtml(tip)}">\u23F1 ${fmtGenTime(m.genMs)}</span>`;
+}
+
 /* Stage 2 visibility: build the 📖 badge + collapsible details block from
    the compact retrieval summary pinned on an assistant message. Answers
    "what did the storybook actually do on this turn" without opening F12. */
@@ -9356,6 +9462,7 @@ function renderMessages() {
     const showTypingDots = isCurrentlyGenerating && !m.content && !m.reasoning;
     const searchBadge = m.searchData ? '<span class="search-badge" title="Web search results attached">&#128269;</span>' : '';
     const ragChip = !isUser ? renderRagChip(m) : { badge: '', block: '' };
+    const genTime = !isUser ? renderGenTime(m, isCurrentlyGenerating) : '';
     
     // Render search results as a visible, linkified block
     let searchBlock = '';
@@ -9409,7 +9516,7 @@ function renderMessages() {
         <div class="msg-header">
           <span class="msg-avatar">${avatar}</span>
           <span class="message-role">${roleLabel}</span>
-          ${searchBadge}${ragChip.badge}
+          ${searchBadge}${ragChip.badge}${genTime}
         </div>
         ${cotBlock}${ragChip.block}
         ${mainContent}
