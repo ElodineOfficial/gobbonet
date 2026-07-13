@@ -137,6 +137,18 @@
   font-size: 14px;
 }
 
+/* Story-memory button (chat header) + readout in the memory modal */
+.memory-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 4px 6px;
+  opacity: 0.75;
+}
+.memory-btn:hover { opacity: 1; }
+
 /* Custom macro rows in MODS modal */
 .macro-row {
   display: flex;
@@ -703,6 +715,7 @@ input[type="range"]::-moz-range-thumb {
       <span class="thread-title" id="thread-title">No thread selected</span>
       <span class="status-label" id="status-label">Checking...</span>
       <span class="status-dot" id="status-dot"></span>
+      <button class="memory-btn" id="memory-btn" onclick="openMemoryModal()" title="Story memories — thread-scoped RAG entries distilled from scenes as they compress into lore">&#129504;</button>
       <span class="privacy-badge" id="privacy-badge" title="llama.cpp — fully offline, zero telemetry">&#128274;</span>
     </div>
     <div id="model-switch-toast"></div>
@@ -1192,6 +1205,37 @@ input[type="range"]::-moz-range-thumb {
 </div>
 
 <!-- SCHEDULER MODAL -->
+<!-- STORY MEMORY MODAL (thread-scoped RAG entries) -->
+<div class="modal-backdrop" id="memory-modal">
+  <div class="modal">
+    <h2>&#129504; STORY MEMORIES</h2>
+    <div class="form-hint" style="margin-bottom:10px;">
+      Thread-scoped storybook entries, distilled by the local model from scenes as they get
+      compressed into lore — the details leave the always-on summary and land here instead,
+      retrieved only when they become relevant again. Same grammar as the character storybook
+      (<code># title</code>, <code>tags:</code>, <code>aliases:</code>, prose); both retrievers
+      pull from here and entries inject under <code>[Story memory: &hellip;]</code>, kept visibly
+      distinct from authored canon. Everything below is yours to edit &mdash; fix, trim, or delete
+      anything the model got wrong.
+    </div>
+    <div class="form-group">
+      <textarea id="memory-text" rows="14" spellcheck="false" oninput="updateMemoryReadout()" placeholder="# the dock fire&#10;tags: docks [0.6], fire [0.6], warehouse [0.6]&#10;Around turn 12: The warehouse fire on the docks was set deliberately; Selah found the smuggler's sigil burned into the door."></textarea>
+      <div class="carousel-counter" id="memory-readout"></div>
+    </div>
+    <div class="form-group">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <input type="checkbox" id="memory-auto-extract" style="width:15px;height:15px;cursor:pointer;accent-color:var(--amber,#ffaa00);">
+        Auto-extract memories when older messages are compressed into lore
+      </label>
+      <div class="form-hint">Runs deferred after compression, costs the turn nothing. The raw archived messages stay in the scrollback either way, so a failed extraction never loses anything.</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeMemoryModal()">Cancel</button>
+      <button class="btn btn-fill" onclick="saveMemoryModal()">SAVE</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="sched-modal">
   <div class="modal">
     <h2>SCHEDULER</h2>
@@ -1455,7 +1499,7 @@ input[type="range"]::-moz-range-thumb {
    but this stamp still shows the old date, you're on a cached
    copy — hard-refresh (Ctrl+Shift+R) to bust it.
 ================================================================ */
-const CHAT_HTML_BUILD = '2026-07-12-rag-recency-echo';
+const CHAT_HTML_BUILD = '2026-07-12-rag-story-memory';
 console.log(`%c[chat.html build] ${CHAT_HTML_BUILD}`, 'color:#0a0;font-weight:bold');
 
 /* ================================================================
@@ -2727,7 +2771,8 @@ const DEFAULT_SETTINGS = {
   semanticBackstop: true,      // A also scores B's entities for allusive scenes
   topKA: 5,                    // top-k semantic results from Retriever A
   retrievalBudgetTokens: 6000, // ceiling carved from the existing context budget
-  retrievalWindowMsgs: 4       // how many recent messages form the trigger window
+  retrievalWindowMsgs: 4,      // how many recent messages form the trigger window
+  memoryExtraction: true       // distill archived scenes into thread story memories
 };
 
 // Extensions: custom stylesheets and scripts the user can inject.
@@ -5244,6 +5289,15 @@ function normalizeMessagesForStrictTemplates(messages) {
        one-hop relational expansion gated by offscreen_default (and
        never sourced from a candidate that suppression will veto);
        warmth/decay kills flicker.
+     Story memories — thread-scoped entries distilled by the LOCAL
+       model whenever compression archives a scene (the same seam
+       that feeds thread.lore). They share the storybook grammar,
+       merge into both retrievers each turn (ragCombinedBook), carry
+       uniform sub-identity tag weights so a single common word can't
+       identity-fire them, and inject under [Story memory: …] so
+       authored canon stays visibly distinct from the model's own
+       recollection. Ties in the ranker break toward canon; a memory
+       can join the party but never displace the author's word.
 
    The unified ranker merges A+B and dedupes (an entity from both
    sources costs budget once). Scoring: tag weight-sums map through
@@ -5599,9 +5653,17 @@ function ragEntityHits(book, surface, cfg) {
 /* Injection header the model sees. Subtree dots become em-dash breadcrumbs
    ("reinhard — childhood"); role_in_arcs text rides along so the arc role
    is model-visible context, not just a hidden ranking boost. Tags and
-   weights remain control data and never appear here. */
+   weights remain control data and never appear here.
+   Story memories get their own banner so the model can weigh authored
+   canon against its own distilled recollection; the runtime collision
+   suffix (" ~n" from ragCombinedBook) is control data and is stripped. */
 function ragInjectionHeader(id, e) {
-  const pretty = String(id).split('.').join(' \u2014 ');
+  const raw = String(id).replace(/ ~\d+$/, '');
+  if ((e && e.isMemory) || raw.indexOf('mem:') === 0) {
+    const pretty = raw.replace(/^mem:/, '').split('.').join(' \u2014 ');
+    return pretty.indexOf('doc:') === 0 ? '[Story memory]' : '[Story memory: ' + pretty + ']';
+  }
+  const pretty = raw.split('.').join(' \u2014 ');
   const role = e && e.roleInArcs && e.roleInArcs.trim() ? e.roleInArcs.trim() : '';
   return '[Storybook: ' + pretty + (role ? ' | role: ' + role : '') + ']';
 }
@@ -5802,6 +5864,396 @@ async function ragIngestCard(card) {
   } catch (e) { /* degrade silently */ }
 }
 
+/* ================================================================
+   STORY MEMORIES  (thread-scoped RAG, distilled at the compression seam)
+
+   When compression archives a scene into thread.lore, the details it
+   carried used to survive only inside an ever-resummarized paragraph —
+   recursive lossy compression with a hard char ceiling that trims the
+   OLDEST story first. Story memories change the failure mode: the same
+   local model that writes the summary also distills the archived span
+   into structured entries (storybook grammar), appended to a per-thread
+   store and merged into BOTH retrievers. A detail that misses retrieval
+   costs one turn of relevance; a detail lost to compression was gone
+   forever. The raw archived messages persist in thread.messages either
+   way, so extraction is retryable and never the only copy of anything.
+
+   Trust rules (this is model output feeding back into model context):
+   - entries are dated PAST EVENTS, not state assertions — dated events
+     age gracefully; stale states contradict the live story;
+   - tags get a uniform sub-identity weight (MEMORY_TAG_WEIGHT), so one
+     common word can never identity-fire a memory; the entry's own
+     title/aliases remain the identity path;
+   - injection banner is [Story memory: …], never [Storybook: …];
+   - ties in the ranker break toward authored canon (ragRankCompare);
+   - everything is user-editable in the 🧠 modal. Curation beats silent
+     accumulation.
+================================================================ */
+const MEMORY_MAX_ENTRIES_PER_PASS = 5;   // per compression event; bounds growth rate
+const MEMORY_PROSE_MAX_CHARS = 700;      // per entry; memories are facts, not chapters
+const MEMORY_MAX_TAGS = 8;
+/* 0.6 = the 2nd-newest-user-message recency multiplier. Two fresh memory
+   tags (1.2) cross the default fire threshold; one alone (0.6) cannot, and
+   no memory tag can ever reach the identity gate (which needs weight >= T).
+   Authored bare tags stay at 1.0 — canon speaks louder by construction. */
+const MEMORY_TAG_WEIGHT = 0.6;
+
+/* Parse-and-cache on the thread — the exact pattern of getCardStorybook.
+   The cache property is non-enumerable so cleanThread's spread never
+   persists it; the raw string thread.ragMemories is what rides into
+   storage, exports, and the /state sync alongside thread.lore. */
+function getThreadMemoryBook(thread) {
+  const raw = (thread && thread.ragMemories) || '';
+  const h = ragHash(raw);
+  if (!thread) return parseStorybook('');
+  if (!thread._memBook || thread._memBook._hash !== h) {
+    const parsed = parseStorybook(raw);
+    parsed._hash = h;
+    try { Object.defineProperty(thread, '_memBook', { value: parsed, writable: true, enumerable: false, configurable: true }); }
+    catch (e) { thread._memBook = parsed; }
+  }
+  return thread._memBook;
+}
+
+/* Merge the card's authored storybook with this thread's story memories
+   into one book for the retrievers. Memory entities are flagged
+   isMemory (shallow copies — the cached parses are never mutated).
+
+   Collision rule: if a memory id collides with an authored id (the model
+   titled an entry after a character despite instructions, or the user
+   authored an entity later), the memory is re-keyed with a runtime-only
+   " ~n" suffix and its original title becomes an alias — so a fresh
+   mention of the name still identity-fires BOTH the authored entity and
+   the memory (bio + recent history is the desired pull), while the
+   authored entity keeps sole ownership of the id. The suffix never
+   round-trips through the parser and is stripped from injection headers.
+   Memory prose chunks are namespaced "mem:" for the same reason. */
+function ragCombinedBook(card, thread) {
+  const cb = getCardStorybook(card);
+  const mb = getThreadMemoryBook(thread);
+  if (!mb.order.length && !mb.proseChunks.length) return cb;
+  const combined = {
+    entities: Object.assign({}, cb.entities),
+    order: cb.order.slice(),
+    proseChunks: cb.proseChunks.concat(mb.proseChunks.map(c => ({ id: 'mem:' + c.id, text: c.text }))),
+    counts: {
+      entities: cb.counts.entities + mb.counts.entities,
+      subtrees: cb.counts.subtrees + mb.counts.subtrees,
+      tags: cb.counts.tags + mb.counts.tags,
+      aliases: cb.counts.aliases + mb.counts.aliases,
+      proseChunks: cb.counts.proseChunks + mb.counts.proseChunks
+    }
+  };
+  for (const id of mb.order) {
+    const src = mb.entities[id];
+    const e = Object.assign({}, src, { isMemory: true });
+    let nid = id;
+    if (combined.entities[nid]) {
+      let n = 2;
+      while (combined.entities[id + ' ~' + n]) n++;
+      nid = id + ' ~' + n;
+      e.id = nid;
+      e.aliases = (src.aliases || []).concat([id.split('.').pop()]);
+    }
+    combined.entities[nid] = e;
+    combined.order.push(nid);
+  }
+  return combined;
+}
+
+/* Ranker comparator: score descending; exact ties break toward authored
+   canon. The model's own recollection can join the injection, but when
+   the signals are indistinguishable it must never displace the author's
+   word from the budget. */
+function ragRankCompare(a, b) {
+  return (b.score - a.score)
+    || ((a.c && a.c.isMemory ? 1 : 0) - (b.c && b.c.isMemory ? 1 : 0));
+}
+
+/* Titles must survive the section-header charset ([A-Za-z0-9_.- ]) and
+   must NOT contain '.', which would silently turn the entry into a
+   subtree. Lowercased for stable dedupe; capped so the leaf matcher has
+   a sane term. */
+function ragSanitizeMemoryTitle(raw) {
+  return String(raw || '').toLowerCase()
+    .replace(/[^a-z0-9_\- ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim().slice(0, 48).trim();
+}
+
+/* Canonical serializer for ONE memory entry. We never trust the model's
+   raw formatting into the store: titles are sanitized upstream, tag
+   weights are overridden to MEMORY_TAG_WEIGHT uniformly (the model's
+   confidence in its own keywords is not a signal), terms are stripped of
+   grammar-significant characters, and prose is folded to a single line —
+   a line that parsed as prose re-parses as prose, so the round trip is
+   stable by construction (belt-and-suspenders lstrip included). */
+function ragSerializeMemoryEntry(e, title, extraAliases) {
+  const cleanTerm = (t) => String(t || '').replace(/[\[\],]/g, ' ').replace(/\s+/g, ' ').trim();
+  const lines = ['# ' + title];
+  const tags = (e.tags || []).map(t => cleanTerm(t.term)).filter(Boolean)
+    .slice(0, MEMORY_MAX_TAGS)
+    .map(term => term + ' [' + MEMORY_TAG_WEIGHT + ']');
+  if (tags.length) lines.push('tags: ' + tags.join(', '));
+  const aliases = Array.from(new Set(
+    (extraAliases || []).concat(e.aliases || []).map(cleanTerm).filter(Boolean)
+  ));
+  if (aliases.length) lines.push('aliases: ' + aliases.join(', '));
+  let prose = (e.prose || '').split('\n').map(s => s.trim()).filter(Boolean).join(' ');
+  prose = prose.replace(/^[#=\[\]\-*_\s]+/, '');
+  if (prose.length > MEMORY_PROSE_MAX_CHARS) {
+    const cut = prose.slice(0, MEMORY_PROSE_MAX_CHARS);
+    const stop = cut.lastIndexOf('. ');
+    prose = stop > MEMORY_PROSE_MAX_CHARS * 0.5 ? cut.slice(0, stop + 1) : cut + '\u2026';
+  }
+  if (prose) lines.push(prose);
+  return lines.join('\n');
+}
+
+/* Append validated entries from a parsed candidate book onto the thread's
+   memory store. Append-ONLY: rewriting entries would reintroduce exactly
+   the compression decay this system exists to escape. Duplicate titles
+   across passes get a numeric rename with the original kept as an alias,
+   so name matching survives and parseStorybook's header-merge behavior
+   can never silently fuse two separate events. Returns entries appended. */
+function ragAppendMemories(thread, srcBook) {
+  if (!thread || !srcBook) return 0;
+  const existing = getThreadMemoryBook(thread);
+  const haveIds = new Set(existing.order.map(id => id.toLowerCase()));
+  const blocks = [];
+  for (const id of srcBook.order) {
+    if (blocks.length >= MEMORY_MAX_ENTRIES_PER_PASS) break;
+    const e = srcBook.entities[id];
+    if (!e || e.kind !== 'entity') continue;        // top-level events only
+    if (!(e.prose || '').trim()) continue;          // nothing to inject → useless memory
+    let title = ragSanitizeMemoryTitle(id);
+    if (title.length < 3) continue;                 // below the leaf-matcher minimum
+    const extraAliases = [];
+    if (haveIds.has(title.toLowerCase())) {
+      const base = title;
+      let k = 2;
+      while (haveIds.has((base + ' ' + k).toLowerCase())) k++;
+      title = base + ' ' + k;
+      extraAliases.push(base);
+    }
+    haveIds.add(title.toLowerCase());
+    blocks.push(ragSerializeMemoryEntry(e, title, extraAliases));
+  }
+  if (!blocks.length) return 0;
+  const prior = (thread.ragMemories || '').trim();
+  thread.ragMemories = (prior ? prior + '\n\n' : '') + blocks.join('\n\n');
+  saveState();
+  ragIngestMemories(thread);   // fire-and-forget: warm the embed cache
+  return blocks.length;
+}
+
+/* Opportunistic ingest for memory prose — the ragIngestCard of this store.
+   Embeddings are cached by CONTENT hash, so append-only growth re-embeds
+   nothing that already exists. Silently no-ops if the embed server is
+   down; Retriever B still fires on tags/titles regardless. */
+async function ragIngestMemories(thread) {
+  try {
+    if (!state.settings.retrievalEnabled || !state.settings.retrieverA) return;
+    const book = getThreadMemoryBook(thread);
+    const docs = ragBuildDocPool(book);
+    for (const d of docs) {
+      for (const seg of ragSplitForEmbed(d.text)) { await ragEmbedCached(seg, 'document'); }
+    }
+  } catch (e) { /* degrade silently */ }
+}
+
+/* One-shot completion against the local model with the project's CoT
+   hygiene: whatever thinking format the model emits is routed to
+   .reasoning by the shared stream parser and thrown away — the same fix
+   that keeps chain-of-thought out of lore keeps it out of memories. */
+async function ragLocalCompletion(sysPrompt, userBody, opts) {
+  opts = opts || {};
+  try {
+    const resp = await privacyFetch(LLAMA_URL + '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'local',
+        messages: [
+          { role: 'system', content: sysPrompt },
+          { role: 'user', content: userBody }
+        ],
+        stream: true,
+        max_tokens: opts.max_tokens || 512,
+        temperature: (typeof opts.temperature === 'number') ? opts.temperature : 0.3
+      })
+    });
+    if (!resp.ok) return '';
+    const tmpMsg = { role: 'assistant', content: '', reasoning: '' };
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        const tok = extractTokenFromLine(line);
+        if (tok) processStreamDelta(tmpMsg, tok.text, tok.field);
+      }
+    }
+    finalizeStreamMessage(tmpMsg);
+    return (tmpMsg.content || '').trim();
+  } catch (e) {
+    return '';
+  }
+}
+
+/* Post-process raw extraction output into a candidate book, or null.
+   Everything before the first section header is chatter ("Here are the
+   entries:") and is dropped; a NONE sentinel or headerless output means
+   the model found nothing worth keeping. Header lines are normalized
+   through the title sanitizer BEFORE parsing: a punctuated title
+   ("# Selah's Betrayal!") fails the header charset, and the parser would
+   otherwise glue that whole entry onto the PREVIOUS entry's prose. After
+   sanitizing, a sloppy title costs nothing. Pure function — testable. */
+function ragParseExtraction(out) {
+  if (!out || /^\s*NONE\b/i.test(out)) return null;
+  const idx = out.search(/^\s*#\s*\S/m);
+  if (idx < 0) return null;
+  const text = out.slice(idx).split('\n').map(line => {
+    const m = line.match(/^\s*#{1,3}\s*(.+)$/);
+    if (!m) return line;
+    const t = ragSanitizeMemoryTitle(m[1]);
+    return t ? '# ' + t : line;
+  }).join('\n');
+  const parsed = parseStorybook(text);
+  return parsed.order.length ? parsed : null;
+}
+
+/* The extraction pass. Deferred and fire-and-forget from the compression
+   seam: the lore summary is needed synchronously (it replaces the
+   archived text in the very prompt being built), but memories only
+   matter for FUTURE turns — so this costs the current turn zero latency.
+   Same input hygiene as summarizeForLore: message content only, never
+   chain-of-thought. Degrades to a silent no-op on any failure; the raw
+   archived messages persist regardless, so nothing is ever lost to a
+   failed extraction. */
+async function ragExtractMemories(thread, archivedMsgs) {
+  try {
+    if (!thread || !archivedMsgs || !archivedMsgs.length) return;
+    if (!state.settings.retrievalEnabled || state.settings.memoryExtraction === false) return;
+
+    // Turn anchor — computed synchronously, before any await, while the
+    // indexes are still the ones the user saw.
+    const firstIdx = Math.max(0, thread.messages.indexOf(archivedMsgs[0]));
+    const lastIdx = Math.max(firstIdx, thread.messages.indexOf(archivedMsgs[archivedMsgs.length - 1]));
+    const t0 = Math.floor(firstIdx / 2) + 1;
+    const t1 = Math.floor(lastIdx / 2) + 1;
+    const anchor = t0 === t1 ? ('turn ' + t0) : ('turns ' + t0 + '\u2013' + t1);
+
+    const sys = 'You extract durable story memories from a roleplay transcript excerpt. '
+      + 'Output ONLY memory entries in exactly this format, nothing else:\n\n'
+      + '# short event title\n'
+      + 'tags: comma, separated, keywords\n'
+      + 'One to three sentences, past tense, beginning with the time anchor.\n\n'
+      + 'Rules:\n'
+      + '- 1 to ' + MEMORY_MAX_ENTRIES_PER_PASS + ' entries. Fewer, better entries beat many weak ones.\n'
+      + '- Each entry records ONE concrete event, decision, revelation, promise, injury, gain or loss, or relationship change that later scenes may depend on.\n'
+      + '- Title: 2-5 lowercase words naming the EVENT, never just a character\'s name.\n'
+      + '- tags: 3-8 lowercase keywords someone would plausibly say when this matters again — the people, places, objects, and topics involved. Plain words only, no weights, no brackets.\n'
+      + '- Prose: begin with "Around ' + anchor + ':" and state only facts from the excerpt. No speculation, no analysis, no commentary.\n'
+      + '- If nothing is worth remembering, output exactly: NONE';
+
+    let body = '=== TRANSCRIPT EXCERPT (around ' + anchor + ') ===\n';
+    for (const m of archivedMsgs) {
+      const text = m.content || '';  // intentionally NOT m.reasoning
+      if (!text) continue;
+      body += (m.role === 'user' ? 'User' : 'Assistant') + ': ' + text + '\n\n';
+    }
+    body += '=== END ===\nExtract the memory entries now.';
+
+    const out = await ragLocalCompletion(sys, body, { max_tokens: 700, temperature: 0.2 });
+    const parsed = ragParseExtraction(out);
+    if (!parsed) return;
+
+    // The thread may have been deleted while the model was generating.
+    if (!state.threads.some(t => t.id === thread.id)) return;
+
+    const n = ragAppendMemories(thread, parsed);
+    if (!n) return;
+    console.info('[memory] distilled ' + n + ' story memor' + (n === 1 ? 'y' : 'ies') + ' (around ' + anchor + ')');
+    ragNotifyMemories(thread, n);
+  } catch (e) { /* degrade silently — the archived messages persist regardless */ }
+}
+
+/* Light-touch surfacing of a completed background extraction: transient
+   indicator on the active thread (self-clearing, and only clearing its
+   OWN text so it can't stomp a live "compressing..." status), plus a live
+   refresh of the memory modal if it's open on this thread. */
+function ragNotifyMemories(thread, n) {
+  try {
+    if (getActiveThread() !== thread) return;
+    const note = 'archived scene distilled into ' + n + ' story memor' + (n === 1 ? 'y' : 'ies');
+    renderLoreIndicator(note);
+    setTimeout(() => {
+      const el = document.querySelector('.lore-indicator');
+      if (el && (el.textContent || '').indexOf('story memor') !== -1) renderLoreIndicator('');
+    }, 6000);
+    const modal = document.getElementById('memory-modal');
+    if (modal && modal.classList.contains('open') && _memoryModalThreadId === thread.id) {
+      const ta = document.getElementById('memory-text');
+      if (ta) ta.value = thread.ragMemories || '';
+      updateMemoryReadout();
+    }
+  } catch (e) {}
+}
+
+/* ---- Memory modal (🧠 in the chat header) ---- */
+let _memoryModalThreadId = null;
+
+function openMemoryModal() {
+  const t = getActiveThread();
+  if (!t) return;
+  _memoryModalThreadId = t.id;
+  const ta = document.getElementById('memory-text');
+  if (ta) ta.value = t.ragMemories || '';
+  const cb = document.getElementById('memory-auto-extract');
+  if (cb) cb.checked = state.settings.memoryExtraction !== false;
+  updateMemoryReadout();
+  document.getElementById('memory-modal').classList.add('open');
+}
+
+function closeMemoryModal() {
+  document.getElementById('memory-modal').classList.remove('open');
+  _memoryModalThreadId = null;
+}
+
+function saveMemoryModal() {
+  const t = getActiveThread();
+  if (t && t.id === _memoryModalThreadId) {
+    t.ragMemories = document.getElementById('memory-text').value;
+    ragIngestMemories(t);   // warm the embed cache for anything new
+  }
+  const cb = document.getElementById('memory-auto-extract');
+  if (cb) state.settings.memoryExtraction = !!cb.checked;
+  saveState();
+  closeMemoryModal();
+}
+
+function updateMemoryReadout() {
+  const el = document.getElementById('memory-readout');
+  if (!el) return;
+  try {
+    const ta = document.getElementById('memory-text');
+    const parsed = parseStorybook((ta && ta.value) || '');
+    const parts = [parsed.counts.entities + ' memor' + (parsed.counts.entities === 1 ? 'y' : 'ies')];
+    if (parsed.counts.subtrees) parts.push(parsed.counts.subtrees + ' subtrees');
+    parts.push(parsed.counts.tags + ' tags');
+    if (parsed.counts.aliases) parts.push(parsed.counts.aliases + ' aliases');
+    el.textContent = 'parsed \u2192 ' + parts.join(' \u00b7 ');
+  } catch (e) {
+    el.textContent = 'parse error: ' + (e && e.message);
+  }
+}
+
 /* Per-thread warmth state (anti-flicker). Kept in-memory only — it is
    session-scoped flicker control, not worth syncing into /state. */
 const _ragWarmth = new Map(); // threadId -> { entityId: remainingTurns }
@@ -5863,7 +6315,8 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
       retrieval_budget_tokens: cfg.retrievalBudgetTokens,
       recency_weights: RAG_RECENCY_WEIGHTS.slice(),
       echo_discount: RAG_ECHO_DISCOUNT,
-      identity_floor_msgs: RAG_IDENTITY_FLOOR_MSGS
+      identity_floor_msgs: RAG_IDENTITY_FLOOR_MSGS,
+      memory_extraction: cfg.memoryExtraction !== false
     },
     window: { messages_scanned: 0, tokens_scanned: 0, hash: '' },
     budget: budgetSnapshot,
@@ -5891,13 +6344,27 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
   try {
     if (!cfg.retrievalEnabled) { record.budget.retrieval_tokens = 0; _ragLastTurnSummary = null; return finish(); }
 
-    const book = getCardStorybook(card);
+    // Combined trigger/doc surface: the card's authored storybook plus
+    // this thread's story memories (same grammar, merged per turn — see
+    // ragCombinedBook for the collision rules). Telemetry keeps the card
+    // stats sourced from the card book alone so authored size stays
+    // legible; memories are reported separately.
+    const cardBook = getCardStorybook(card);
+    const memBook = getThreadMemoryBook(thread);
+    const book = ragCombinedBook(card, thread);
     record.cards_in_play.push({
       card_id: card.id,
-      tag_count: book.order.reduce((n, id) => n + book.entities[id].tags.length, 0),
-      weight_total: book.order.reduce((n, id) => n + book.entities[id].tags.reduce((s, t) => s + t.weight, 0), 0),
-      subtree_count: book.counts.subtrees
+      tag_count: cardBook.order.reduce((n, id) => n + cardBook.entities[id].tags.length, 0),
+      weight_total: cardBook.order.reduce((n, id) => n + cardBook.entities[id].tags.reduce((s, t) => s + t.weight, 0), 0),
+      subtree_count: cardBook.counts.subtrees
     });
+    if (memBook.order.length || memBook.proseChunks.length) {
+      record.memories = {
+        entities: memBook.counts.entities,
+        subtrees: memBook.counts.subtrees,
+        prose_chunks: memBook.proseChunks.length
+      };
+    }
 
     // Nothing authored → still emit a (cheap) record so the per-turn contract
     // holds, but skip all the work.
@@ -5939,6 +6406,7 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
         id, kind: e ? e.kind : 'doc', parent: e ? e.parent : null,
         triggers: new Set(), matched_tags: [], weight_sum: 0, semScore: 0,
         offscreen: e ? e.offscreenDefault : false,
+        isMemory: e ? !!e.isMemory : String(id).indexOf('mem:') === 0,
         role: e ? e.roleInArcs : '', use: e ? e.usePrinciples : '',
         prose: e ? e.prose : ''
       };
@@ -6113,7 +6581,8 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
     // so budget is spent once. If the same entity surfaced via both, its
     // record carries multiple trigger flags; the canonical trigger_type is the
     // strongest one. (No separate dup rows needed — one id, one budget charge.)
-    ranked.sort((a, b) => b.score - a.score);
+    // Ties break toward authored canon over story memories (ragRankCompare).
+    ranked.sort(ragRankCompare);
 
     // ---- budget fill ----
     const retrievalCeiling = Math.max(0, Math.min(cfg.retrievalBudgetTokens || 0, Math.floor(freeForRetrieval)));
@@ -6159,10 +6628,12 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
         spent,
         aOn: !!record.config.embed_available,
         pulled: record.candidates.filter(x => x.included).map(x => ({
-          id: x.cand_id, tt: x.trigger_type, s: x.score, tok: x.token_cost
+          id: x.cand_id, tt: x.trigger_type, s: x.score, tok: x.token_cost,
+          mem: x.source === 'memory' ? 1 : 0
         })),
         evicted: record.candidates.filter(x => !x.included).map(x => ({
-          id: x.cand_id, tt: x.trigger_type, why: x.eviction_reason || 'unknown'
+          id: x.cand_id, tt: x.trigger_type, why: x.eviction_reason || 'unknown',
+          mem: x.source === 'memory' ? 1 : 0
         })),
         missing: record.flags.missing.slice(0, 8)
       };
@@ -6202,6 +6673,7 @@ function _ragCandRow(r, tokenCost, included, evictionReason, useAttached) {
     kind: r.c.kind,
     parent_entity: r.c.parent,
     trigger_type: r.tt,
+    source: r.c && r.c.isMemory ? 'memory' : 'card',
     matched_tags: r.c.matched_tags,
     weight_sum: +(r.c.weight_sum || 0).toFixed(3),
     score: r.score,
@@ -6389,6 +6861,14 @@ async function buildContextMessages(thread, card, opts) {
       // renderMessages; cleared at the start of the next user turn.
       pendingLoreCompressionNote = { count: toArchive.length, threadId: thread.id };
 
+      // Story-memory extraction (deferred, fire-and-forget). The summary
+      // above was needed synchronously — it replaces the archived text in
+      // THIS very prompt — but memories only matter for future turns, so
+      // they cost this turn zero latency. The archived messages persist in
+      // thread.messages regardless, so a failed or disabled extraction
+      // loses nothing that can't be re-derived later.
+      ragExtractMemories(thread, toArchive.slice());
+
       // Recompute post-archive state. usedTokens now reflects the new
       // (typically smaller) lore — this is what gets returned to the
       // caller as tokensUsed so the status bar shows reality.
@@ -6473,6 +6953,9 @@ async function buildContextMessages(thread, card, opts) {
         try {
           const bk = getCardStorybook(card);
           for (const id of bk.order) for (const t of bk.entities[id].tags) allTerms.push(t.term);
+          // Memory tags carry weights too ("docks [0.6]") — scrub theirs as well.
+          const mk = getThreadMemoryBook(thread);
+          for (const id of mk.order) for (const t of mk.entities[id].tags) allTerms.push(t.term);
         } catch (e) {}
         const scrubbed = ragScrubWeightAnnotations(inj.text, allTerms);
         apiMessages.push({
@@ -8674,9 +9157,9 @@ function renderRagChip(m) {
   const row = (icon, id, meta, warn) =>
     `<div class="rag-row${warn ? ' rag-warn' : ''}">${icon} <span class="rag-id">${escapeHtml(String(id))}</span> <span class="rag-meta">${escapeHtml(meta)}</span></div>`;
   let rows = pulled.map(p =>
-    row('&#10003;', p.id, `${RAG_TT_LABEL[p.tt] || p.tt} · score ${Number(p.s || 0).toFixed(2)} · ~${p.tok || 0} tok`)).join('');
+    row('&#10003;', (p.mem ? '\u{1F9E0} ' : '') + p.id, `${RAG_TT_LABEL[p.tt] || p.tt} · score ${Number(p.s || 0).toFixed(2)} · ~${p.tok || 0} tok`)).join('');
   rows += evicted.map(x =>
-    row('&#10007;', x.id, `${RAG_TT_LABEL[x.tt] || x.tt} · ${RAG_WHY_LABEL[x.why] || x.why}`)).join('');
+    row('&#10007;', (x.mem ? '\u{1F9E0} ' : '') + x.id, `${RAG_TT_LABEL[x.tt] || x.tt} · ${RAG_WHY_LABEL[x.why] || x.why}`)).join('');
   if (Array.isArray(r.missing) && r.missing.length) {
     rows += row('&#9888;', 'unembeddable', r.missing.join(', ') + ' — check embed-server.log', true);
   }
