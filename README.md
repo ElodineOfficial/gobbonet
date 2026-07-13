@@ -260,6 +260,8 @@ Everything Gobbonet can do, grouped so it's easy to scan.
 - Character cards — build your own detailed characters (name, description, personality, style, settings).
 - Import and export character cards (V2/V3) — bring in the standard `.png` character cards used by other popular AI chat apps, and export your own back out in the same format. Cards are cross-compatible both directions, so you don't have to recreate a library you already own. Honest note: most cards carry over cleanly, but some may need a little tweaking after import.
 - Lorebook import — embedded lorebooks come across with their underlying information preserved. Honest note: some extras like tags are dropped during import, but the actual lore content itself stays intact.
+- User controled RAG storybook
+- Lorebook + Rag Storybook work together to auto update new information from extended conversations.
 - Copy, edit, or delete characters.
 - Alternate greetings — give a character several different opening lines.
 - User personas — create a profile for *yourself* so the AI knows who it's talking to.
