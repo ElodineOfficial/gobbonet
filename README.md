@@ -242,6 +242,7 @@ Everything Gobbonet can do, grouped so it's easy to scan.
 - Copy button on code blocks — grab code in one tap.
 - Token counter — see how much of the AI's "memory" you're using.
 - Chain-of-thought (reasoning) view — on models that support it, you can watch the AI's step-by-step thinking.
+- Output token limitations + smart cutoff cutoff feature
 - Auto-stop on stuck reasoning — if the AI's thinking gets caught in an endless loop, it's cut off automatically instead of running forever.
 
 **Conversations & organizing**
