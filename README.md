@@ -1,4 +1,4 @@
-# Gobbonet — Your Own Private AI Chat [May change to Grotto, we'll see what happens]
+# Gobbonet — Your Own Private AI Front End
 
 Gobbonet lets you run an AI chatbot **on your own computer**, with no accounts, no monthly fees, and nothing sent to the internet. The AI lives on your machine. When you talk to it, your words never leave your home.
 
