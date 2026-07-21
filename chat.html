@@ -54,53 +54,6 @@
 }
 .cot-content p { margin: 4px 0; }
 
-/* Storybook retrieval chip (Stage 2 visibility). Mirrors the CoT block's
-   look so meta-blocks read as one family; cyan accent = retrieval. */
-.rag-badge {
-  font-size: 11px;
-  color: var(--cyan-dim, rgba(0,243,255,0.6));
-  margin-left: 6px;
-  cursor: default;
-  user-select: none;
-}
-.rag-block {
-  margin: 4px 0 8px 0;
-  border: 1px solid rgba(0,243,255,0.12);
-  border-radius: 6px;
-  background: rgba(0,243,255,0.02);
-  overflow: hidden;
-  font-size: 12px;
-}
-.rag-summary {
-  padding: 5px 12px;
-  cursor: pointer;
-  color: rgba(0,243,255,0.55);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  user-select: none;
-  list-style: none;
-}
-.rag-summary::-webkit-details-marker { display: none; }
-.rag-summary::before {
-  content: '▸ ';
-  display: inline-block;
-  transition: transform 0.15s;
-}
-.rag-block[open] .rag-summary::before { transform: rotate(90deg); }
-.rag-content {
-  padding: 6px 12px 10px;
-  max-height: 240px;
-  overflow-y: auto;
-  border-top: 1px solid rgba(0,243,255,0.08);
-  color: rgba(255,255,255,0.5);
-  line-height: 1.6;
-}
-.rag-row .rag-id { color: var(--cyan-mid, rgba(0,243,255,0.75)); font-weight: 600; }
-.rag-row .rag-meta { opacity: 0.7; }
-.rag-row.rag-warn { color: rgba(255,165,0,0.8); }
-
 /* Archived messages — folded into lore, still visible to the user but
    no longer sent to the model. Dimmed so the live conversation visually
    dominates; click to "wake up" if we ever want that gesture later. */
@@ -135,28 +88,6 @@
 }
 .lore-divider-icon {
   font-size: 14px;
-}
-
-/* Story-memory button (chat header) + readout in the memory modal */
-.memory-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  padding: 4px 6px;
-  opacity: 0.75;
-}
-.memory-btn:hover { opacity: 1; }
-
-/* Response-timer chip in the message header. Tabular numerals so the
-   live tick doesn't jitter the header width while streaming. */
-.gen-time {
-  font-size: 11px;
-  opacity: 0.55;
-  margin-left: 6px;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
 }
 
 /* Custom macro rows in MODS modal */
@@ -725,7 +656,6 @@ input[type="range"]::-moz-range-thumb {
       <span class="thread-title" id="thread-title">No thread selected</span>
       <span class="status-label" id="status-label">Checking...</span>
       <span class="status-dot" id="status-dot"></span>
-      <button class="memory-btn" id="memory-btn" onclick="openMemoryModal()" title="Story memories — thread-scoped RAG entries distilled from scenes as they compress into lore">&#129504;</button>
       <span class="privacy-badge" id="privacy-badge" title="llama.cpp — fully offline, zero telemetry">&#128274;</span>
     </div>
     <div id="model-switch-toast"></div>
@@ -961,14 +891,9 @@ input[type="range"]::-moz-range-thumb {
 
       <div class="form-group">
         <label for="card-rag-storybook">RAG Storybook <span style="opacity:0.5;font-weight:400;font-size:11px;">&mdash; retrieved on demand, not always-on</span></label>
-        <textarea id="card-rag-storybook" rows="6" placeholder="The big character/world bible. Author once; only the slice a scene needs enters context.&#10;&#10;Structured (title + tags fire the entry):&#10;# selah&#10;A winged figure, divine and remote.&#10;aliases: sel, the winged one&#10;tags: angel [1.0], divine [0.8], wing [1.0], halo [0.5]&#10;relation: reinhard&#10;role_in_arcs: protector&#10;offscreen_default: false&#10;use_principles: Render her speech as formal and archaic.&#10;&#10;...or just plain prose, which is chunked and matched semantically." style="font-size:12px;resize:vertical;" oninput="updateStorybookReadout()"></textarea>
-        <div class="form-hint">Unlike Starting Lore (small, always present), the storybook is large and pulled <strong>on demand</strong>. The <strong>title fires by itself</strong> &mdash; mention &quot;Selah&quot; and her entry pulls even with no tags &mdash; and <code>aliases:</code> adds alternate names that fire the same way. Tags match as stems (<code>wing</code> matches wing/wings/winged). Also accepts <code>relation:</code>, <code>role_in_arcs:</code> (priority boost, shown to the model), <code>offscreen_default:</code>, <code>use_principles:</code> &mdash; flat <code>name_tags:</code> form works too &mdash; and/or plain prose; the parser routes by shape. Tag <code>[weights]</code> are control data and never reach the model.</div>
+        <textarea id="card-rag-storybook" rows="6" placeholder="The big character/world bible. Author once; only the slice a scene needs enters context.&#10;&#10;Structured (weighted tags fire by theme):&#10;# selah&#10;A winged figure, divine and remote.&#10;tags: angel [1.0], divine [0.8], winged [1.0], halo [0.5]&#10;relation: reinhard&#10;role_in_arcs: protector&#10;offscreen_default: false&#10;use_principles: Render her speech as formal and archaic.&#10;&#10;...or just plain prose, which is chunked and matched semantically." style="font-size:12px;resize:vertical;" oninput="updateStorybookReadout()"></textarea>
+        <div class="form-hint">Unlike Starting Lore (small, always present), the storybook is large and pulled <strong>on demand</strong>. Accepts structured lines (<code>tags:</code>, <code>relation:</code>, <code>role_in_arcs:</code>, <code>offscreen_default:</code>, <code>use_principles:</code> &mdash; flat <code>name_tags:</code> form works too) and/or plain prose; the parser routes by shape. Tag <code>[weights]</code> are control data and never reach the model.</div>
         <div class="carousel-counter" id="storybook-readout"></div>
-        <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
-          <input type="text" id="storybook-testfire-input" placeholder="Test fire: type a sample chat line, see what pulls" style="flex:1;font-size:12px;" onkeydown="if(event.key==='Enter'){event.preventDefault();runStorybookTestFire();}">
-          <button class="btn btn-sm" type="button" onclick="runStorybookTestFire()">Test fire</button>
-        </div>
-        <pre id="storybook-testfire-output" style="display:none; margin-top:8px; max-height:220px; overflow:auto; font-size:11px; padding:8px; background:var(--black); border:1px solid var(--border); border-radius:var(--radius); color:var(--cyan-mid); white-space:pre-wrap;"></pre>
       </div>
 
       <div class="form-group">
@@ -1065,26 +990,6 @@ input[type="range"]::-moz-range-thumb {
             <label for="card-repeat-last-n">Repeat Window</label>
             <input type="number" id="card-repeat-last-n" min="0" max="2048" step="1" value="64">
             <div class="form-hint">How many recent tokens the repeat penalty looks back. 0 = disabled.</div>
-          </div>
-        </div>
-
-        <div style="margin-top:14px;padding-top:10px;border-top:1px dashed rgba(255,255,255,0.08);">
-          <label style="color:var(--cyan-dim);font-size:12px;letter-spacing:0.5px;">Response Length — soft budget</label>
-          <div class="form-hint" style="margin-top:2px;margin-bottom:10px;">One dial, two mechanisms. A hidden reminder rides next to your latest message asking the model to write about this much (the <em>target</em>), and anything that overruns the budget is stopped at the next clean sentence or paragraph end and trimmed there (the <em>ceiling</em>) — never mid-word. In RP, a reply that halts on an open beat is a feature: it hands the scene back to you. Thinking models are unaffected in their reasoning — only the visible reply is metered, so this is safe on every model family. 0 = off.</div>
-          <div class="form-row">
-            <div class="form-group" style="flex:1;">
-              <label for="card-resp-tokens">Reply Budget (tokens)</label>
-              <input type="range" id="card-resp-tokens" min="0" max="800" step="20" value="0" oninput="document.getElementById('card-resp-tokens-val').textContent=(this.value==0?'Off':this.value)">
-              <div class="form-hint" style="display:flex;justify-content:space-between;"><span>Off 0</span><span id="card-resp-tokens-val">Off</span><span>800</span></div>
-            </div>
-            <div class="form-group" style="flex:1;">
-              <label for="card-resp-boundary">Finish At</label>
-              <select id="card-resp-boundary">
-                <option value="sentence">End of sentence</option>
-                <option value="paragraph">End of paragraph</option>
-              </select>
-              <div class="form-hint">Where overflow past the budget gets cut. Sentence is tightest; paragraph lets the current block finish first.</div>
-            </div>
           </div>
         </div>
 
@@ -1215,37 +1120,6 @@ input[type="range"]::-moz-range-thumb {
 </div>
 
 <!-- SCHEDULER MODAL -->
-<!-- STORY MEMORY MODAL (thread-scoped RAG entries) -->
-<div class="modal-backdrop" id="memory-modal">
-  <div class="modal">
-    <h2>&#129504; STORY MEMORIES</h2>
-    <div class="form-hint" style="margin-bottom:10px;">
-      Thread-scoped storybook entries, distilled by the local model from scenes as they get
-      compressed into lore — the details leave the always-on summary and land here instead,
-      retrieved only when they become relevant again. Same grammar as the character storybook
-      (<code># title</code>, <code>tags:</code>, <code>aliases:</code>, prose); both retrievers
-      pull from here and entries inject under <code>[Story memory: &hellip;]</code>, kept visibly
-      distinct from authored canon. Everything below is yours to edit &mdash; fix, trim, or delete
-      anything the model got wrong.
-    </div>
-    <div class="form-group">
-      <textarea id="memory-text" rows="14" spellcheck="false" oninput="updateMemoryReadout()" placeholder="# the dock fire&#10;tags: docks [0.6], fire [0.6], warehouse [0.6]&#10;Around turn 12: The warehouse fire on the docks was set deliberately; Selah found the smuggler's sigil burned into the door."></textarea>
-      <div class="carousel-counter" id="memory-readout"></div>
-    </div>
-    <div class="form-group">
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-        <input type="checkbox" id="memory-auto-extract" style="width:15px;height:15px;cursor:pointer;accent-color:var(--amber,#ffaa00);">
-        Auto-extract memories when older messages are compressed into lore
-      </label>
-      <div class="form-hint">Runs deferred after compression, costs the turn nothing. The raw archived messages stay in the scrollback either way, so a failed extraction never loses anything.</div>
-    </div>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeMemoryModal()">Cancel</button>
-      <button class="btn btn-fill" onclick="saveMemoryModal()">SAVE</button>
-    </div>
-  </div>
-</div>
-
 <div class="modal-backdrop" id="sched-modal">
   <div class="modal">
     <h2>SCHEDULER</h2>
@@ -1509,7 +1383,7 @@ input[type="range"]::-moz-range-thumb {
    but this stamp still shows the old date, you're on a cached
    copy — hard-refresh (Ctrl+Shift+R) to bust it.
 ================================================================ */
-const CHAT_HTML_BUILD = '2026-07-12-response-timer';
+const CHAT_HTML_BUILD = '2026-05-16-nemo-strict-template-fix';
 console.log(`%c[chat.html build] ${CHAT_HTML_BUILD}`, 'color:#0a0;font-weight:bold');
 
 /* ================================================================
@@ -2752,13 +2626,7 @@ const DEFAULT_CARD = {
   xtcThreshold: 0.1,
   dryMultiplier: 0,
   bannedPhrases: '',
-  logitBiasStrength: -20,
-  // Response-length governor — 0 = off. When set, a hidden nudge in the
-  // recency slot asks the model for roughly this many tokens, and anything
-  // that overruns the budget is stopped/trimmed at the next clean sentence
-  // or paragraph boundary instead of mid-word. See RESPONSE LENGTH GOVERNOR.
-  respTokens: 0,
-  respBoundary: 'sentence'
+  logitBiasStrength: -20
 };
 const DEFAULT_SETTINGS = {
   modelName: 'auto',
@@ -2781,8 +2649,7 @@ const DEFAULT_SETTINGS = {
   semanticBackstop: true,      // A also scores B's entities for allusive scenes
   topKA: 5,                    // top-k semantic results from Retriever A
   retrievalBudgetTokens: 6000, // ceiling carved from the existing context budget
-  retrievalWindowMsgs: 4,      // how many recent messages form the trigger window
-  memoryExtraction: true       // distill archived scenes into thread story memories
+  retrievalWindowMsgs: 4       // how many recent messages form the trigger window
 };
 
 // Extensions: custom stylesheets and scripts the user can inject.
@@ -4479,181 +4346,6 @@ function resetCarouselIndex() {
   updateCarouselCounter(null);
 }
 
-/* ================================================================
-   RESPONSE LENGTH GOVERNOR
-   ----------------------------------------------------------------
-   "Nudge as target, boundary as ceiling." Two halves, one per-card
-   dial (respTokens; respBoundary = 'sentence' | 'paragraph'):
-
-     1. TARGET — buildLengthNudgeLine() emits a hidden system line
-        in the recency slot (right before the last user message,
-        same trick as the carousel) asking the model for roughly
-        the budget. Prompt-side shaping; most models mostly obey,
-        and because the line rides the recency slot it never drifts
-        away from the generation point as the chat grows — unlike a
-        length rule parked in the writing style up top.
-
-     2. CEILING — while streaming, governorWantsCut() watches the
-        VISIBLE reply. Once the estimate passes the budget AND a
-        clean boundary exists, the stream is aborted (llama-server
-        cancels the slot on disconnect — same mechanism as the Stop
-        button), and applyResponseLengthTrim() lands the final text
-        exactly on that boundary. The trim also runs on natural
-        EOS finishes, so a model that ignores the nudge and writes
-        three paragraphs still comes out at the first boundary past
-        the budget. Never a mid-word clip: overflow runs to the end
-        of the sentence/paragraph it started, then stops there.
-
-   Why not max_tokens? Two reasons. It clips MID-SENTENCE (the
-   model can't see the cap, so it can't plan around it), and on
-   thinking models it counts REASONING tokens too — a tight cap
-   would blank the visible reply entirely. This governor meters
-   msg.content only: reasoning streams free on every family, and
-   the cut always lands on punctuation. A reply that halts on an
-   open beat mid-scene is deliberate — it hands the moment back to
-   the user.
-
-   Sizes are estimateTokens() words-based approximations — exactly
-   as accurate as the rest of the context budgeter, and the
-   boundary snap makes token-perfect accounting unnecessary.
-================================================================ */
-
-// Overflow allowance past the budget while we wait for a boundary to
-// appear. A long RP sentence runs ~40 tokens, so 128 covers several;
-// paragraphs need more room to close. Past budget+grace with still no
-// boundary, we cut anyway and fall back to the last sentence end.
-const RESP_GOVERNOR_GRACE = { sentence: 128, paragraph: 256 };
-
-// Words that end with a period WITHOUT ending a sentence. Single-letter
-// initials ("J. Doe") and dotted latinisms ("e.g.", "i.e.") are caught
-// separately by the one-letter rule in findSentenceEnds.
-const RESP_ABBREVIATIONS = new Set([
-  'mr', 'mrs', 'ms', 'dr', 'prof', 'sr', 'jr', 'st', 'vs', 'etc',
-  'lt', 'sgt', 'capt', 'col', 'gen', 'approx', 'dept', 'inc'
-]);
-
-function createResponseGovernor(card) {
-  card = card || getActiveCard();
-  const target = Number(card && card.respTokens) || 0;
-  if (!(target > 0)) return null;
-  const boundary = card.respBoundary === 'paragraph' ? 'paragraph' : 'sentence';
-  return { target, boundary, grace: RESP_GOVERNOR_GRACE[boundary], fired: false };
-}
-
-/**
- * All indices in `text` where a sentence cleanly ends: a run of .!?…
- * plus any trailing closers (quotes, asterisks, brackets, ~), followed
- * by whitespace or end-of-text. The whitespace requirement kills
- * decimals ("3.5"), filenames, and URLs for free. Returned indices are
- * exclusive slice ends — text.slice(0, idx) is a complete sentence.
- */
-function findSentenceEnds(text) {
-  const ends = [];
-  const re = /[.!?…]+["'”’)\]*~]*/g;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    const end = m.index + m[0].length;
-    if (end < text.length && !/\s/.test(text[end])) continue;
-    const wordMatch = text.slice(0, m.index).match(/([A-Za-z]+)$/);
-    if (wordMatch && m[0][0] === '.') {
-      const w = wordMatch[1].toLowerCase();
-      if (RESP_ABBREVIATIONS.has(w)) continue;   // "Dr." "vs." ...
-      if (w.length === 1) continue;              // initials, "e.g.", "i.e."
-    }
-    ends.push(end);
-  }
-  return ends;
-}
-
-/** Paragraph boundaries: cut BEFORE each newline (slice end excludes it). */
-function findParagraphEnds(text) {
-  const ends = [];
-  const re = /\n/g;
-  let m;
-  while ((m = re.exec(text)) !== null) ends.push(m.index);
-  return ends;
-}
-
-/**
- * First boundary at/after the token budget, or -1 while none exists.
- * interiorOnly (streaming) skips a boundary sitting at the very edge of
- * the text — the next delta may extend it (`."` split across chunks, or
- * a decimal still being typed), so we wait one delta to confirm. If the
- * model EOSes right there instead, the normal finish path handles it.
- * O(boundaries × estimate) — the text is one reply, this is nothing.
- */
-function findRespCutIndex(text, targetTokens, boundary, interiorOnly) {
-  const ends = boundary === 'paragraph' ? findParagraphEnds(text) : findSentenceEnds(text);
-  for (const end of ends) {
-    if (interiorOnly && end >= text.length) continue;
-    if (estimateTokens(text.slice(0, end)) >= targetTokens) return end;
-  }
-  return -1;
-}
-
-/**
- * Streaming check: true once we're past the budget AND either a clean
- * interior boundary exists (normal case) or we've overshot budget+grace
- * with no boundary at all (runaway run-on — cut anyway; the trim falls
- * back to the last sentence end). One-shot per generation via gov.fired.
- * Content-only by construction: during a thinking phase msg.content is
- * empty, so reasoning never counts against the budget.
- */
-function governorWantsCut(gov, msg) {
-  if (!gov || gov.fired) return false;
-  const text = msg && msg.content;
-  if (!text) return false;
-  const toks = estimateTokens(text);
-  if (toks < gov.target) return false;
-  if (findRespCutIndex(text, gov.target, gov.boundary, true) >= 0 || toks >= gov.target + gov.grace) {
-    gov.fired = true;
-    return true;
-  }
-  return false;
-}
-
-/**
- * Enforcement half — runs on the FINAL text (post-finalizeStreamMessage,
- * so marker scrubbing can't shift the cut) for clean finishes and
- * governor stops alike. No-op when the reply is already within budget,
- * when the governor is off, or when no safe cut exists.
- */
-function applyResponseLengthTrim(msg, card) {
-  const gov = createResponseGovernor(card);
-  if (!gov || !msg || !msg.content) return;
-  const text = msg.content;
-  let cut = findRespCutIndex(text, gov.target, gov.boundary, false);
-  if (cut < 0) {
-    // No boundary at/after the budget. Only intervene on a true runaway;
-    // a reply that landed inside the grace zone keeps its own ending.
-    if (estimateTokens(text) < gov.target + gov.grace) return;
-    const ends = findSentenceEnds(text);
-    if (!ends.length) return;              // one unbroken run — leave it
-    cut = ends[ends.length - 1];
-  }
-  if (cut >= text.length) return;          // boundary IS the ending — nothing past it
-  const removed = text.length - cut;
-  msg.content = text.slice(0, cut).replace(/\s+$/, '');
-  console.log(`[length] Soft cap ${gov.target} tok (${gov.boundary} mode) — trimmed ${removed} overflow chars at the boundary.`);
-}
-
-/**
- * The "target" half: hidden nudge text for the recency slot, or '' when
- * the governor is off. The budget is translated into plain English —
- * "~140 tokens" means nothing to a model; "a short paragraph" does.
- */
-function buildLengthNudgeLine(card) {
-  const gov = createResponseGovernor(card);
-  if (!gov) return '';
-  let label;
-  if (gov.target <= 60)       label = 'one or two sentences';
-  else if (gov.target <= 120) label = 'two or three sentences';
-  else if (gov.target <= 220) label = 'a short paragraph';
-  else if (gov.target <= 400) label = 'a paragraph or two';
-  else                        label = 'a few short paragraphs';
-  return '[Response length]\nKeep this reply to about ' + label + '. Stop at a natural beat instead of resolving everything — leaving the moment open gives {{user}} room to act.';
-}
-
 /**
  * Pick the next carousel line for a card.
  * Mutates card.carouselIndex for sequential mode and saves state.
@@ -4810,87 +4502,8 @@ function updateStorybookReadout() {
   parts.push(`${c.entities} ${c.entities === 1 ? 'entity' : 'entities'}`);
   if (c.subtrees) parts.push(`${c.subtrees} subtree${c.subtrees !== 1 ? 's' : ''}`);
   parts.push(`${c.tags} tag${c.tags !== 1 ? 's' : ''}`);
-  if (c.aliases) parts.push(`${c.aliases} alias${c.aliases !== 1 ? 'es' : ''}`);
   parts.push(`${c.proseChunks} prose chunk${c.proseChunks !== 1 ? 's' : ''}`);
-  // Embed-segment count: how many pieces Retriever A will actually index.
-  // Matches ragSplitForEmbed exactly, so "1 chunk, 6 segments" tells you a
-  // long bio is being sliced (good) instead of silently rejected (the old
-  // failure mode).
-  try {
-    const segs = ragBuildDocPool(parsed).reduce((n, d) => n + ragSplitForEmbed(d.text).length, 0);
-    if (segs) parts.push(`${segs} embed segment${segs !== 1 ? 's' : ''}`);
-  } catch (e) { /* readout is best-effort */ }
   el.textContent = 'parsed \u2192 ' + parts.join(' \u00b7 ');
-}
-
-/* Test-fire (Stage 2): dry-run a sample chat line through the SAME
-   matching helpers the live retriever uses — ragEntityHits for tags/
-   titles/aliases, ragDocSim for semantics — with zero side effects: no
-   warmth mutation, no telemetry record, nothing injected. What fires
-   here fires in chat, by construction. */
-async function runStorybookTestFire() {
-  const out = document.getElementById('storybook-testfire-output');
-  const input = document.getElementById('storybook-testfire-input');
-  if (!out || !input) return;
-  const sample = (input.value || '').trim();
-  const raw = document.getElementById('card-rag-storybook')?.value || '';
-  out.style.display = 'block';
-  if (!sample) { out.textContent = 'Type a sample line first.'; return; }
-  if (!raw.trim()) { out.textContent = 'Storybook is empty \u2014 nothing to fire.'; return; }
-  let book;
-  try { book = parseStorybook(raw); } catch (e) { out.textContent = 'parse error: ' + (e && e.message); return; }
-
-  const cfg = state.settings;
-  const T = cfg.fireThreshold || 1.0;
-  const hits = ragEntityHits(book, sample.toLowerCase(), cfg);
-  const fmtMatch = (m) => m.map(t => t.implicit ? (t.term + ' (name)') : (t.term + ' [' + t.weight + ']')).join(', ');
-
-  const fired = [], near = [], atHalf = [];
-  for (const id of book.order) {
-    const h = hits[id];
-    if (!h || h.sum <= 0) continue;
-    const line = id + '  sum=' + h.sum.toFixed(2) + '  via ' + fmtMatch(h.matched) + (h.identityHit ? '  [identity]' : '');
-    if (h.sum >= T) fired.push(line);
-    else { near.push(line); if (h.sum >= T * 0.5) atHalf.push(id); }
-  }
-
-  const lines = [];
-  lines.push('fire threshold ' + T + '  \u00b7  same matcher as the live turn (sample = newest user message, full strength)');
-  lines.push('');
-  lines.push(fired.length ? 'FIRES (' + fired.length + '):\n  ' + fired.join('\n  ') : 'FIRES: none');
-  if (near.length) {
-    lines.push('');
-    lines.push('Below threshold (' + near.length + '):\n  ' + near.join('\n  '));
-    if (atHalf.length) lines.push('  \u2192 would fire at threshold ' + (T * 0.5).toFixed(2) + ': ' + atHalf.join(', '));
-  }
-  out.textContent = lines.join('\n');
-
-  // Semantic side — async; first run indexes segments (cached after).
-  if (cfg.retrieverA) {
-    out.textContent += '\n\nSemantic (Retriever A): embedding\u2026';
-    try {
-      const qvec = await ragEmbedRaw(sample, 'query');
-      if (!qvec) {
-        out.textContent = out.textContent.replace(/embedding\u2026$/, 'embed server unreachable \u2014 tag-only.');
-        return;
-      }
-      const scored = [], unembeddable = [];
-      for (const d of ragBuildDocPool(book)) {
-        const ds = await ragDocSim(qvec, d.text);
-        if (ds.embedded === 0) unembeddable.push(d.id);
-        else scored.push({ id: d.id, sim: ds.sim });
-      }
-      scored.sort((a, b) => b.sim - a.sim);
-      let sem = scored.length
-        ? 'top matches: ' + scored.slice(0, 3).map(s =>
-            s.id + ' ' + s.sim.toFixed(2) + (s.sim >= RAG_SEM_FLOOR ? '' : ' (below floor)')).join(' \u00b7 ')
-        : 'no embeddable prose.';
-      if (unembeddable.length) sem += '\n  \u26a0 unembeddable: ' + unembeddable.join(', ') + ' \u2014 check embed-server.log';
-      out.textContent = out.textContent.replace(/embedding\u2026$/, sem);
-    } catch (e) {
-      out.textContent = out.textContent.replace(/embedding\u2026$/, 'error: ' + (e && e.message));
-    }
-  }
 }
 
 
@@ -5270,7 +4883,7 @@ function normalizeMessagesForStrictTemplates(messages) {
 }
 
 /* ================================================================
-   RAG ENGINE  (Stage 2 — dual retriever + telemetry + visibility)
+   RAG ENGINE  (Stage 1 — dual retriever + telemetry)
 
    Two retrievers feed context on demand, integrated at the single
    injection seam (buildContextMessages). Everything below is
@@ -5279,57 +4892,19 @@ function normalizeMessagesForStrictTemplates(messages) {
    B carries on; if a card has no storybook the whole thing no-ops.
 
      Retriever A — general / semantic. Entity descriptions + freeform
-       prose chunks are split into embed-safe segments (see
-       ragSplitForEmbed), embedded once each (cached by content
-       hash), and cosine-scored against the recent window each turn.
-       An entity's semantic score is the MAX over its segments, so
-       long bios no longer silently fall off the embedder's context.
-     Retriever B — structured / weighted-tag. The trigger surface is
-       recency-weighted: the newest message matches at full strength,
-       older window messages decay (RAG_RECENCY_WEIGHTS), and the
-       model's own messages count half (RAG_ECHO_DISCOUNT) — the model
-       echoing our injection back is not evidence. A pull fires when
-       the decayed SUM of matched tag weights >= fire_threshold, OR on
-       a FRESH identity hit: the section title and any `aliases:`
-       terms act as implicit identity tags (title+blurb entries with
-       zero authored tags now fire on their name — previously they
-       were invisible to B). Subtree leaf names only count when the
-       parent is also mentioned, so `reinhard.childhood` doesn't fire
-       on every stray "childhood". Entity + subtree granularity;
-       one-hop relational expansion gated by offscreen_default (and
-       never sourced from a candidate that suppression will veto);
-       warmth/decay kills flicker.
-     Story memories — thread-scoped entries distilled by the LOCAL
-       model whenever compression archives a scene (the same seam
-       that feeds thread.lore). They share the storybook grammar,
-       merge into both retrievers each turn (ragCombinedBook), carry
-       uniform sub-identity tag weights so a single common word can't
-       identity-fire them, and inject under [Story memory: …] so
-       authored canon stays visibly distinct from the model's own
-       recollection. Ties in the ranker break toward canon; a memory
-       can join the party but never displace the author's word.
+       prose chunks are embedded once (cached by content hash) and
+       cosine-scored against the recent window each turn.
+     Retriever B — structured / weighted-tag. A thematic pull fires
+       when the SUMMED weight of matched tags >= fire_threshold;
+       entity + subtree granularity; one-hop relational expansion
+       gated by offscreen_default; warmth/decay kills flicker.
 
-   The unified ranker merges A+B and dedupes (an entity from both
-   sources costs budget once). Scoring: tag weight-sums map through
-   the non-saturating w/(w+T) curve (margin above threshold keeps
-   mattering), semantic cosine is rescaled above RAG_SEM_FLOOR onto
-   the same 0..1 scale, and the two blend via noisy-OR so
-   corroboration outranks either signal alone. Direct name/alias
-   mentions get an identity score floor — if the user says "Selah",
-   Selah wins the budget — but only while the mention is fresh (a
-   user message within the newest RAG_IDENTITY_FLOOR_MSGS); older or
-   model-echoed mentions decay into warmth instead of pinning the
-   floor forever. role_in_arcs still applies its priority
-   boost AND its text now rides into the injection header so the
-   model can see the entity's arc role.
-
-   Every decision is logged into the per-turn telemetry record and
-   emitted on the 'gobbonet:retrieval' event. Stage 2 consumes it:
-   a compact summary is attached to the assistant message and
-   rendered as the 📖 retrieval chip (what fired, why, what was
-   evicted), and the card editor's Test-fire box dry-runs a sample
-   line through the SAME matching helpers (ragEntityHits), so what
-   you see in the editor is what the live retriever does.
+   The unified ranker merges A+B, dedupes (an entity from both
+   sources costs budget once), ranks by score x arc-role, fills a
+   retrieval budget carved from the existing context budget, and
+   pushes survivors as system messages. Every decision is logged
+   into the per-turn telemetry record (Part 1 of the design) and
+   emitted on the 'gobbonet:retrieval' event for Stage 2 to consume.
 ================================================================ */
 
 /* Fast, dependency-free string hash (FNV-1a, 32-bit, hex). Used as a
@@ -5343,62 +4918,6 @@ function ragHash(str) {
     h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
   }
   return ('00000000' + h.toString(16)).slice(-8);
-}
-
-/* ---- Shared retrieval constants ----
-   RAG_SEM_FLOOR: cosine below this is noise for the current embed model
-   (nomic-embed-text v1.5); scores are rescaled above it before blending.
-   RAG_EMBED_SEG_TOKENS / _HARD: chunker target / hard cap per segment, in
-   estimateTokens units. Chosen to stay under llama-server's DEFAULT
-   n_ubatch of 512 real tokens — non-causal embedders must fit the whole
-   input in one ubatch, so anything larger is rejected and the doc used to
-   silently vanish from Retriever A. launch.bat now passes --ubatch-size
-   explicitly, but the cap keeps older launchers working too.
-   RAG_QUERY_TOKENS: same ceiling for the per-turn query embed; long
-   4-message windows used to 400 the embed call and switch A off for the
-   turn while looking like the server was down. */
-const RAG_SEM_FLOOR = 0.25;
-const RAG_EMBED_SEG_TOKENS = 380;
-const RAG_EMBED_SEG_HARD = 440;
-const RAG_QUERY_TOKENS = 440;
-
-/* Recency/echo weighting of the trigger surface (Retriever B).
-   RAG_RECENCY_WEIGHTS: per-message match multiplier, newest → older;
-   windows longer than the table hold the last value (0.2). A term seen in
-   several window messages counts ONCE, at its strongest occurrence —
-   repetition across turns is not extra evidence.
-   RAG_ECHO_DISCOUNT: multiplier for assistant-authored messages. The model
-   repeating our own injection back at us is not evidence of anything, so
-   its words match at half strength.
-   RAG_IDENTITY_FLOOR_MSGS: how many of the newest messages can arm the
-   identity floor. A name/alias (or >= threshold tag) hit earns identity
-   status only from a USER message this fresh; staler mentions still add
-   their decayed weight but the entity fades into warmth instead of being
-   pinned at the top of the budget forever. */
-const RAG_RECENCY_WEIGHTS = [1.0, 0.6, 0.35, 0.2];
-const RAG_ECHO_DISCOUNT = 0.5;
-const RAG_IDENTITY_FLOOR_MSGS = 2;
-
-/* Compiled-regex cache for tag/name/alias terms. One matcher semantics
-   everywhere (authored tags, implicit title terms, aliases) so the editor
-   Test-fire box and the live retriever can never disagree.
-   The matcher is word-boundary anchored with a poor-man's stemmer: an
-   optional s/es/ed/ing suffix on the LAST word, so `wing` matches wing,
-   wings, winged, winging. Author tags as stems. It is one-directional —
-   `winged` still won't match "wings" — but strictly matches MORE than the
-   old exact-word regex ever did. */
-const _ragTermReCache = new Map();
-function ragTermRegex(term) {
-  const key = String(term).toLowerCase();
-  let re = _ragTermReCache.get(key);
-  if (re) return re;
-  const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // Only append the inflection group when the term ends in a letter —
-  // terms ending in digits/punctuation get the plain word-boundary match.
-  const suffix = /[a-z]$/.test(key) ? '(?:s|es|ed|ing)?' : '';
-  re = new RegExp('\\b' + esc + suffix + '\\b');
-  _ragTermReCache.set(key, re);
-  return re;
 }
 
 /* Parse one *_tags value into [{term, weight}]. Bare terms default to
@@ -5425,11 +4944,9 @@ function parseWeightedTags(value) {
    "<id>_<suffix>: value" routes to structured control data; "<id>." prefixes
    address subtrees (entity.subtree). Anything that is not a recognized
    directive (and not a section header) is prose for Retriever A. */
-const RAG_DIRECTIVE_RE = /^([A-Za-z0-9][A-Za-z0-9_.\- ]*?)_(tags|alias(?:es)?|relation(?:_[A-Za-z0-9]+)?|role_in_arcs|use(?:_[A-Za-z0-9]+)?|offscreen_default)\s*:\s*(.*)$/i;
+const RAG_DIRECTIVE_RE = /^([A-Za-z0-9][A-Za-z0-9_.\- ]*?)_(tags|relation(?:_[A-Za-z0-9]+)?|role_in_arcs|use(?:_[A-Za-z0-9]+)?|offscreen_default)\s*:\s*(.*)$/i;
 // Bare directive (inside a "# entity" section): "tags: ...", "relation: ...".
-// `aliases:` lists alternate names ("sel, the winged one") — each is an
-// identity-level trigger, exactly like the section title itself.
-const RAG_BARE_DIRECTIVE_RE = /^(tags|alias(?:es)?|relation(?:_[A-Za-z0-9]+)?|role_in_arcs|use(?:_[A-Za-z0-9]+)?|offscreen_default)\s*:\s*(.*)$/i;
+const RAG_BARE_DIRECTIVE_RE = /^(tags|relation(?:_[A-Za-z0-9]+)?|role_in_arcs|use(?:_[A-Za-z0-9]+)?|offscreen_default)\s*:\s*(.*)$/i;
 // Section header forms: "# selah", "== selah ==", "[selah]". "##"/"." = subtree.
 const RAG_HEADER_RE = /^(?:#{1,3}\s*|\=\=\s*|\[)\s*([A-Za-z0-9][A-Za-z0-9_.\- ]*?)\s*(?:\=\=|\])?\s*$/;
 
@@ -5437,7 +4954,7 @@ function ragNewEntity(id) {
   return {
     id, kind: id.includes('.') ? 'subtree' : 'entity',
     parent: id.includes('.') ? id.split('.')[0] : null,
-    tags: [], aliases: [], relations: [], roleInArcs: '', usePrinciples: '',
+    tags: [], relations: [], roleInArcs: '', usePrinciples: '',
     offscreenDefault: false, prose: ''
   };
 }
@@ -5445,12 +4962,10 @@ function ragNewEntity(id) {
 /* Parse the whole storybook field. Routes structured lines to entities/
    subtrees (Retriever B) and plain prose to chunks (Retriever A). Supports
    BOTH the flat form ("selah_tags: angel [1.0]") and the sectioned form
-   ("# selah" header, then bare "tags: ..." + prose lines). `aliases:`
-   (or flat "selah_aliases:") lists alternate names — identity triggers,
-   same as the title itself. */
+   ("# selah" header, then bare "tags: ..." + prose lines). */
 function parseStorybook(raw) {
   const result = { entities: {}, order: [], proseChunks: [],
-                   counts: { entities: 0, subtrees: 0, tags: 0, aliases: 0, proseChunks: 0 } };
+                   counts: { entities: 0, subtrees: 0, tags: 0, proseChunks: 0 } };
   if (!raw || !raw.trim()) return result;
 
   const ensure = (id) => {
@@ -5460,10 +4975,6 @@ function parseStorybook(raw) {
   const applyDirective = (ent, suffix, value) => {
     const s = suffix.toLowerCase();
     if (s === 'tags') ent.tags = ent.tags.concat(parseWeightedTags(value));
-    else if (s === 'alias' || s === 'aliases') ent.aliases = ent.aliases.concat(
-      // parseWeightedTags tolerates a stray "[0.8]" on an alias, but the
-      // weight is discarded — aliases are identity-level by definition.
-      parseWeightedTags(value).map(t => t.term));
     else if (s === 'role_in_arcs') ent.roleInArcs = value.trim();
     else if (s === 'offscreen_default') ent.offscreenDefault = /^(1|true|yes|on)$/i.test(value.trim());
     else if (s.startsWith('relation')) ent.relations = ent.relations.concat(
@@ -5523,7 +5034,6 @@ function parseStorybook(raw) {
     const e = result.entities[id];
     if (e.kind === 'subtree') result.counts.subtrees++; else result.counts.entities++;
     result.counts.tags += e.tags.length;
-    result.counts.aliases += e.aliases.length;
   }
   result.counts.proseChunks = result.proseChunks.length
     + result.order.filter(id => result.entities[id].prose).length;
@@ -5544,157 +5054,11 @@ function getCardStorybook(card) {
   return card._storybook;
 }
 
-/* THE shared Retriever-B matcher. Both the live retriever and the card
-   editor's Test-fire box call this, so they can never drift apart.
-   `surface` is either a plain lowercased string (Test-fire box, shadow
-   probes — treated as ONE full-strength, identity-eligible segment) or an
-   array of window segments [{ text, mult, identityEligible }], one per
-   recent message, built where the live window is assembled (see
-   RAG_RECENCY_WEIGHTS / RAG_ECHO_DISCOUNT / RAG_IDENTITY_FLOOR_MSGS).
-   Returns { id: { sum, matched:[{term,weight,mult,implicit?}], identityHit,
-   nameHit } } for EVERY entity/subtree (tag-less ones included — that is
-   the point of the title fix).
-
-   Recency/echo semantics:
-   - Each matched term contributes weight × mult of its STRONGEST matching
-     segment. A term seen in several messages counts once — repetition
-     across turns (e.g. the model echoing an injection) is not evidence,
-     so echoes cannot stack a term back over threshold.
-   - Assistant segments arrive pre-discounted (mult already includes
-     RAG_ECHO_DISCOUNT); this function just honors mult.
-
-   Identity firing rules (recency-gated):
-   - Authored tag with weight >= fireThreshold matched in an identity-
-     eligible segment (user message within the newest
-     RAG_IDENTITY_FLOOR_MSGS) → identityHit.
-   - The section TITLE (leaf name, >= 3 chars) matched → implicit identity
-     tag worth fireThreshold × mult, so a bare name mention fires on its
-     own and scales if the user raises the threshold. Subtree leaves only
-     count when the parent's name (or a parent alias) is ALSO somewhere in
-     the window — `reinhard.childhood` shouldn't fire on every stray
-     "childhood".
-   - Any `aliases:` term matched → same as a title hit. Title + alias fold
-     into ONE implicit term (they are the same identity signal — two forms
-     of one name must not double-charge the sum).
-   - Title/alias hits OUTSIDE the eligible zone still add their decayed
-     weight to the sum but no longer confer identity status: the floor is
-     for a fresh, user-authored name; a stale one fades into warmth.
-   nameHit covers an identity-eligible title OR alias hit and is what
-   bypasses offscreen suppression downstream. */
-function ragEntityHits(book, surface, cfg) {
-  const T = (cfg && cfg.fireThreshold) || 1.0;
-  const segs = (typeof surface === 'string')
-    ? [{ text: surface, mult: 1, identityEligible: true }]
-    : surface;
-  const allText = segs.map(s => s.text || '').join('\n');
-  // Best occurrence of a term across the segments: max mult, plus whether
-  // ANY matching segment is identity-eligible. null = matched nowhere.
-  // (ragTermRegex compiles without /g, so .test is stateless per segment.)
-  const probe = (term) => {
-    const re = ragTermRegex(term);
-    let hit = false, mult = 0, eligible = false;
-    for (const s of segs) {
-      if (!s.text || !re.test(s.text)) continue;
-      hit = true;
-      if (s.mult > mult) mult = s.mult;
-      if (s.identityEligible) eligible = true;
-    }
-    return hit ? { mult, eligible } : null;
-  };
-  const hits = {};
-  for (const id of book.order) {
-    const e = book.entities[id];
-    let sum = 0; const matched = []; let identityHit = false;
-    for (const t of e.tags) {
-      const p = probe(t.term);
-      if (p) {
-        matched.push({ term: t.term, weight: t.weight, mult: p.mult });
-        sum += t.weight * p.mult;
-        if (t.weight >= T && p.eligible) identityHit = true;
-      }
-    }
-    const leaf = id.split('.').pop();
-    let nameProbe = null;
-    if (leaf.length >= 3) {
-      const p = probe(leaf);
-      if (p) {
-        if (e.kind === 'entity') {
-          nameProbe = p;
-        } else {
-          // Subtree disambiguation: the parent must be mentioned SOMEWHERE
-          // in the window (any segment) — it is a gate, not a signal, so it
-          // is not recency-weighted.
-          const parentLeaf = (e.parent || '').split('.').pop();
-          const pe = book.entities[e.parent];
-          if (parentLeaf && ragTermRegex(parentLeaf).test(allText)) nameProbe = p;
-          else if (pe && pe.aliases.some(a => a && ragTermRegex(a).test(allText))) nameProbe = p;
-        }
-      }
-    }
-    let aliasProbe = null, aliasTerm = '';
-    for (const a of e.aliases) {
-      if (!a) continue;
-      const p = probe(a);
-      if (p && (!aliasProbe || p.mult > aliasProbe.mult)) { aliasProbe = p; aliasTerm = a; }
-    }
-    // Fold title + alias into one implicit identity term at the strongest
-    // occurrence; identity eligibility merges across both (the entity was
-    // freshly named either way).
-    let idProbe = null, idTerm = leaf;
-    if (nameProbe) idProbe = { mult: nameProbe.mult, eligible: nameProbe.eligible };
-    if (aliasProbe) {
-      if (!idProbe) { idProbe = { mult: aliasProbe.mult, eligible: aliasProbe.eligible }; idTerm = aliasTerm; }
-      else {
-        if (aliasProbe.mult >= idProbe.mult) { idProbe.mult = aliasProbe.mult; idTerm = aliasTerm; }
-        idProbe.eligible = idProbe.eligible || aliasProbe.eligible;
-      }
-    }
-    let nameHit = false;
-    if (idProbe) {
-      matched.push({ term: idTerm, weight: T, implicit: true, mult: idProbe.mult });
-      sum += T * idProbe.mult;
-      if (idProbe.eligible) { identityHit = true; nameHit = true; }
-    }
-    hits[id] = { sum, matched, identityHit, nameHit };
-  }
-  return hits;
-}
-
-/* Injection header the model sees. Subtree dots become em-dash breadcrumbs
-   ("reinhard — childhood"); role_in_arcs text rides along so the arc role
-   is model-visible context, not just a hidden ranking boost. Tags and
-   weights remain control data and never appear here.
-   Story memories get their own banner so the model can weigh authored
-   canon against its own distilled recollection; the runtime collision
-   suffix (" ~n" from ragCombinedBook) is control data and is stripped. */
-function ragInjectionHeader(id, e) {
-  const raw = String(id).replace(/ ~\d+$/, '');
-  if ((e && e.isMemory) || raw.indexOf('mem:') === 0) {
-    const pretty = raw.replace(/^mem:/, '').split('.').join(' \u2014 ');
-    return pretty.indexOf('doc:') === 0 ? '[Story memory]' : '[Story memory: ' + pretty + ']';
-  }
-  const pretty = raw.split('.').join(' \u2014 ');
-  const role = e && e.roleInArcs && e.roleInArcs.trim() ? e.roleInArcs.trim() : '';
-  return '[Storybook: ' + pretty + (role ? ' | role: ' + role : '') + ']';
-}
-
-/* Per-turn compact summary handoff (Stage 2 visibility). runRetrieval
-   deposits it; the send/reroll flows consume it and pin it onto the
-   assistant message, where renderMessages draws the 📖 chip. Consume-once
-   so a stale summary can never attach to an unrelated turn. */
-let _ragLastTurnSummary = null;
-function consumeRagTurnSummary() {
-  const s = _ragLastTurnSummary;
-  _ragLastTurnSummary = null;
-  return s;
-}
-
 /* ---- Embedding client (Retriever A). Degrade-safe: any failure returns
    null and the caller proceeds tag-only. ---- */
 const RAG_EMBED_PREFIX = { document: 'search_document: ', query: 'search_query: ' };
 const _ragVecMem = new Map();      // hash -> Float32-ish array (in-memory mirror)
 let _ragEmbedDimWarned = false;
-const _ragEmbedFailWarned = new Set(); // doc ids we've already warned about this session
 
 async function ragEmbedRaw(text, mode) {
   // Returns a vector array, or null on any failure (server down, 401, etc.).
@@ -5751,96 +5115,6 @@ function ragCosine(a, b) {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
-/* Split prose into embed-safe segments. Packs paragraphs greedily up to
-   RAG_EMBED_SEG_TOKENS; a single oversize paragraph splits on sentence
-   boundaries, and a pathological run-on sentence gets hard word-chunked.
-   Every emitted segment is <= RAG_EMBED_SEG_HARD, which fits inside
-   llama-server's ubatch even on an older launch.bat that doesn't pass
-   --ubatch-size. Deterministic on identical input, so segment embeds
-   stay cache-hot across turns. */
-function ragSplitForEmbed(text) {
-  const t = (text || '').trim();
-  if (!t) return [];
-  if (estimateTokens(t) <= RAG_EMBED_SEG_HARD) return [t];
-  const segs = [];
-  let buf = '';
-  const flush = () => { if (buf.trim()) segs.push(buf.trim()); buf = ''; };
-  const pushPiece = (piece) => {
-    if (!piece.trim()) return;
-    const merged = buf ? buf + '\n\n' + piece : piece;
-    if (estimateTokens(merged) <= RAG_EMBED_SEG_TOKENS) { buf = merged; return; }
-    flush();
-    if (estimateTokens(piece) <= RAG_EMBED_SEG_HARD) { buf = piece; return; }
-    // Oversize paragraph → sentence packing.
-    const sentences = piece.match(/[^.!?\n]+[.!?]+\s*|[^.!?\n]+\n?/g) || [piece];
-    let sbuf = '';
-    for (const s of sentences) {
-      const m2 = sbuf ? sbuf + s : s;
-      if (estimateTokens(m2) <= RAG_EMBED_SEG_TOKENS) { sbuf = m2; continue; }
-      if (sbuf.trim()) segs.push(sbuf.trim());
-      sbuf = '';
-      if (estimateTokens(s) <= RAG_EMBED_SEG_HARD) { sbuf = s; continue; }
-      // Run-on sentence → hard word chunks.
-      const words = s.split(/\s+/);
-      let wbuf = [];
-      for (const w of words) {
-        wbuf.push(w);
-        if (estimateTokens(wbuf.join(' ')) >= RAG_EMBED_SEG_TOKENS) {
-          segs.push(wbuf.join(' '));
-          wbuf = [];
-        }
-      }
-      sbuf = wbuf.join(' ');
-    }
-    if (sbuf.trim()) buf = sbuf.trim(); // trailing sentence may pack with the next paragraph
-  };
-  for (const p of t.split(/\n\s*\n/)) pushPiece(p);
-  flush();
-  return segs;
-}
-
-/* Score one doc against the query vector: max cosine over its segments.
-   Long bios match on their best-fitting slice instead of one muddy (or
-   flat-out rejected) whole-text embed. Returns embedded/segment counts so
-   the caller can flag docs the embedder never accepted. */
-async function ragDocSim(qvec, text) {
-  const segs = ragSplitForEmbed(text);
-  let best = 0, embedded = 0;
-  for (const s of segs) {
-    const dv = await ragEmbedCached(s, 'document');
-    if (!dv) continue;
-    embedded++;
-    const sim = ragCosine(qvec, dv);
-    if (sim > best) best = sim;
-  }
-  return { sim: best, segments: segs.length, embedded };
-}
-
-/* Build the query text for the per-turn embed: newest messages first,
-   packed under RAG_QUERY_TOKENS. If even the newest message alone is
-   oversize, keep its TAIL — the freshest words are the trigger surface.
-   Tag matching still scans the FULL window; this cap is embed-only. */
-function ragQueryTextFromWindow(win) {
-  const parts = [];
-  let total = 0;
-  for (let i = win.length - 1; i >= 0; i--) {
-    const txt = ((win[i] && (win[i].content || win[i].reasoning)) || '').trim();
-    if (!txt) continue;
-    const cost = estimateTokens(txt);
-    if (total + cost > RAG_QUERY_TOKENS) {
-      if (parts.length === 0) {
-        const words = txt.split(/\s+/);
-        const keep = Math.max(20, Math.floor(RAG_QUERY_TOKENS * 0.7)); // tokens→words
-        parts.push(words.slice(-keep).join(' '));
-      }
-      break;
-    }
-    parts.push(txt);
-    total += cost;
-  }
-  return parts.reverse().join('\n');
-}
-
 /* Build the embeddable "doc" pool for a card: every entity/subtree that has
    description prose, plus every standalone prose chunk. Returns [{id, kind,
    parent, text, entityId}]. Embedding itself is lazy + cached per item. */
@@ -5866,402 +5140,8 @@ async function ragIngestCard(card) {
     if (!state.settings.retrievalEnabled || !state.settings.retrieverA) return;
     const book = getCardStorybook(card);
     const docs = ragBuildDocPool(book);
-    // Segment-level ingest: mirrors ragDocSim's cache keys exactly, so the
-    // first chat turn finds every slice already embedded.
-    for (const d of docs) {
-      for (const seg of ragSplitForEmbed(d.text)) { await ragEmbedCached(seg, 'document'); }
-    }
+    for (const d of docs) { await ragEmbedCached(d.text, 'document'); }
   } catch (e) { /* degrade silently */ }
-}
-
-/* ================================================================
-   STORY MEMORIES  (thread-scoped RAG, distilled at the compression seam)
-
-   When compression archives a scene into thread.lore, the details it
-   carried used to survive only inside an ever-resummarized paragraph —
-   recursive lossy compression with a hard char ceiling that trims the
-   OLDEST story first. Story memories change the failure mode: the same
-   local model that writes the summary also distills the archived span
-   into structured entries (storybook grammar), appended to a per-thread
-   store and merged into BOTH retrievers. A detail that misses retrieval
-   costs one turn of relevance; a detail lost to compression was gone
-   forever. The raw archived messages persist in thread.messages either
-   way, so extraction is retryable and never the only copy of anything.
-
-   Trust rules (this is model output feeding back into model context):
-   - entries are dated PAST EVENTS, not state assertions — dated events
-     age gracefully; stale states contradict the live story;
-   - tags get a uniform sub-identity weight (MEMORY_TAG_WEIGHT), so one
-     common word can never identity-fire a memory; the entry's own
-     title/aliases remain the identity path;
-   - injection banner is [Story memory: …], never [Storybook: …];
-   - ties in the ranker break toward authored canon (ragRankCompare);
-   - everything is user-editable in the 🧠 modal. Curation beats silent
-     accumulation.
-================================================================ */
-const MEMORY_MAX_ENTRIES_PER_PASS = 5;   // per compression event; bounds growth rate
-const MEMORY_PROSE_MAX_CHARS = 700;      // per entry; memories are facts, not chapters
-const MEMORY_MAX_TAGS = 8;
-/* 0.6 = the 2nd-newest-user-message recency multiplier. Two fresh memory
-   tags (1.2) cross the default fire threshold; one alone (0.6) cannot, and
-   no memory tag can ever reach the identity gate (which needs weight >= T).
-   Authored bare tags stay at 1.0 — canon speaks louder by construction. */
-const MEMORY_TAG_WEIGHT = 0.6;
-
-/* Parse-and-cache on the thread — the exact pattern of getCardStorybook.
-   The cache property is non-enumerable so cleanThread's spread never
-   persists it; the raw string thread.ragMemories is what rides into
-   storage, exports, and the /state sync alongside thread.lore. */
-function getThreadMemoryBook(thread) {
-  const raw = (thread && thread.ragMemories) || '';
-  const h = ragHash(raw);
-  if (!thread) return parseStorybook('');
-  if (!thread._memBook || thread._memBook._hash !== h) {
-    const parsed = parseStorybook(raw);
-    parsed._hash = h;
-    try { Object.defineProperty(thread, '_memBook', { value: parsed, writable: true, enumerable: false, configurable: true }); }
-    catch (e) { thread._memBook = parsed; }
-  }
-  return thread._memBook;
-}
-
-/* Merge the card's authored storybook with this thread's story memories
-   into one book for the retrievers. Memory entities are flagged
-   isMemory (shallow copies — the cached parses are never mutated).
-
-   Collision rule: if a memory id collides with an authored id (the model
-   titled an entry after a character despite instructions, or the user
-   authored an entity later), the memory is re-keyed with a runtime-only
-   " ~n" suffix and its original title becomes an alias — so a fresh
-   mention of the name still identity-fires BOTH the authored entity and
-   the memory (bio + recent history is the desired pull), while the
-   authored entity keeps sole ownership of the id. The suffix never
-   round-trips through the parser and is stripped from injection headers.
-   Memory prose chunks are namespaced "mem:" for the same reason. */
-function ragCombinedBook(card, thread) {
-  const cb = getCardStorybook(card);
-  const mb = getThreadMemoryBook(thread);
-  if (!mb.order.length && !mb.proseChunks.length) return cb;
-  const combined = {
-    entities: Object.assign({}, cb.entities),
-    order: cb.order.slice(),
-    proseChunks: cb.proseChunks.concat(mb.proseChunks.map(c => ({ id: 'mem:' + c.id, text: c.text }))),
-    counts: {
-      entities: cb.counts.entities + mb.counts.entities,
-      subtrees: cb.counts.subtrees + mb.counts.subtrees,
-      tags: cb.counts.tags + mb.counts.tags,
-      aliases: cb.counts.aliases + mb.counts.aliases,
-      proseChunks: cb.counts.proseChunks + mb.counts.proseChunks
-    }
-  };
-  for (const id of mb.order) {
-    const src = mb.entities[id];
-    const e = Object.assign({}, src, { isMemory: true });
-    let nid = id;
-    if (combined.entities[nid]) {
-      let n = 2;
-      while (combined.entities[id + ' ~' + n]) n++;
-      nid = id + ' ~' + n;
-      e.id = nid;
-      e.aliases = (src.aliases || []).concat([id.split('.').pop()]);
-    }
-    combined.entities[nid] = e;
-    combined.order.push(nid);
-  }
-  return combined;
-}
-
-/* Ranker comparator: score descending; exact ties break toward authored
-   canon. The model's own recollection can join the injection, but when
-   the signals are indistinguishable it must never displace the author's
-   word from the budget. */
-function ragRankCompare(a, b) {
-  return (b.score - a.score)
-    || ((a.c && a.c.isMemory ? 1 : 0) - (b.c && b.c.isMemory ? 1 : 0));
-}
-
-/* Titles must survive the section-header charset ([A-Za-z0-9_.- ]) and
-   must NOT contain '.', which would silently turn the entry into a
-   subtree. Lowercased for stable dedupe; capped so the leaf matcher has
-   a sane term. */
-function ragSanitizeMemoryTitle(raw) {
-  return String(raw || '').toLowerCase()
-    .replace(/[^a-z0-9_\- ]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim().slice(0, 48).trim();
-}
-
-/* Canonical serializer for ONE memory entry. We never trust the model's
-   raw formatting into the store: titles are sanitized upstream, tag
-   weights are overridden to MEMORY_TAG_WEIGHT uniformly (the model's
-   confidence in its own keywords is not a signal), terms are stripped of
-   grammar-significant characters, and prose is folded to a single line —
-   a line that parsed as prose re-parses as prose, so the round trip is
-   stable by construction (belt-and-suspenders lstrip included). */
-function ragSerializeMemoryEntry(e, title, extraAliases) {
-  const cleanTerm = (t) => String(t || '').replace(/[\[\],]/g, ' ').replace(/\s+/g, ' ').trim();
-  const lines = ['# ' + title];
-  const tags = (e.tags || []).map(t => cleanTerm(t.term)).filter(Boolean)
-    .slice(0, MEMORY_MAX_TAGS)
-    .map(term => term + ' [' + MEMORY_TAG_WEIGHT + ']');
-  if (tags.length) lines.push('tags: ' + tags.join(', '));
-  const aliases = Array.from(new Set(
-    (extraAliases || []).concat(e.aliases || []).map(cleanTerm).filter(Boolean)
-  ));
-  if (aliases.length) lines.push('aliases: ' + aliases.join(', '));
-  let prose = (e.prose || '').split('\n').map(s => s.trim()).filter(Boolean).join(' ');
-  prose = prose.replace(/^[#=\[\]\-*_\s]+/, '');
-  if (prose.length > MEMORY_PROSE_MAX_CHARS) {
-    const cut = prose.slice(0, MEMORY_PROSE_MAX_CHARS);
-    const stop = cut.lastIndexOf('. ');
-    prose = stop > MEMORY_PROSE_MAX_CHARS * 0.5 ? cut.slice(0, stop + 1) : cut + '\u2026';
-  }
-  if (prose) lines.push(prose);
-  return lines.join('\n');
-}
-
-/* Append validated entries from a parsed candidate book onto the thread's
-   memory store. Append-ONLY: rewriting entries would reintroduce exactly
-   the compression decay this system exists to escape. Duplicate titles
-   across passes get a numeric rename with the original kept as an alias,
-   so name matching survives and parseStorybook's header-merge behavior
-   can never silently fuse two separate events. Returns entries appended. */
-function ragAppendMemories(thread, srcBook) {
-  if (!thread || !srcBook) return 0;
-  const existing = getThreadMemoryBook(thread);
-  const haveIds = new Set(existing.order.map(id => id.toLowerCase()));
-  const blocks = [];
-  for (const id of srcBook.order) {
-    if (blocks.length >= MEMORY_MAX_ENTRIES_PER_PASS) break;
-    const e = srcBook.entities[id];
-    if (!e || e.kind !== 'entity') continue;        // top-level events only
-    if (!(e.prose || '').trim()) continue;          // nothing to inject → useless memory
-    let title = ragSanitizeMemoryTitle(id);
-    if (title.length < 3) continue;                 // below the leaf-matcher minimum
-    const extraAliases = [];
-    if (haveIds.has(title.toLowerCase())) {
-      const base = title;
-      let k = 2;
-      while (haveIds.has((base + ' ' + k).toLowerCase())) k++;
-      title = base + ' ' + k;
-      extraAliases.push(base);
-    }
-    haveIds.add(title.toLowerCase());
-    blocks.push(ragSerializeMemoryEntry(e, title, extraAliases));
-  }
-  if (!blocks.length) return 0;
-  const prior = (thread.ragMemories || '').trim();
-  thread.ragMemories = (prior ? prior + '\n\n' : '') + blocks.join('\n\n');
-  saveState();
-  ragIngestMemories(thread);   // fire-and-forget: warm the embed cache
-  return blocks.length;
-}
-
-/* Opportunistic ingest for memory prose — the ragIngestCard of this store.
-   Embeddings are cached by CONTENT hash, so append-only growth re-embeds
-   nothing that already exists. Silently no-ops if the embed server is
-   down; Retriever B still fires on tags/titles regardless. */
-async function ragIngestMemories(thread) {
-  try {
-    if (!state.settings.retrievalEnabled || !state.settings.retrieverA) return;
-    const book = getThreadMemoryBook(thread);
-    const docs = ragBuildDocPool(book);
-    for (const d of docs) {
-      for (const seg of ragSplitForEmbed(d.text)) { await ragEmbedCached(seg, 'document'); }
-    }
-  } catch (e) { /* degrade silently */ }
-}
-
-/* One-shot completion against the local model with the project's CoT
-   hygiene: whatever thinking format the model emits is routed to
-   .reasoning by the shared stream parser and thrown away — the same fix
-   that keeps chain-of-thought out of lore keeps it out of memories. */
-async function ragLocalCompletion(sysPrompt, userBody, opts) {
-  opts = opts || {};
-  try {
-    const resp = await privacyFetch(LLAMA_URL + '/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'local',
-        messages: [
-          { role: 'system', content: sysPrompt },
-          { role: 'user', content: userBody }
-        ],
-        stream: true,
-        max_tokens: opts.max_tokens || 512,
-        temperature: (typeof opts.temperature === 'number') ? opts.temperature : 0.3
-      })
-    });
-    if (!resp.ok) return '';
-    const tmpMsg = { role: 'assistant', content: '', reasoning: '' };
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const lines = buf.split('\n');
-      buf = lines.pop() || '';
-      for (const line of lines) {
-        const tok = extractTokenFromLine(line);
-        if (tok) processStreamDelta(tmpMsg, tok.text, tok.field);
-      }
-    }
-    finalizeStreamMessage(tmpMsg);
-    return (tmpMsg.content || '').trim();
-  } catch (e) {
-    return '';
-  }
-}
-
-/* Post-process raw extraction output into a candidate book, or null.
-   Everything before the first section header is chatter ("Here are the
-   entries:") and is dropped; a NONE sentinel or headerless output means
-   the model found nothing worth keeping. Header lines are normalized
-   through the title sanitizer BEFORE parsing: a punctuated title
-   ("# Selah's Betrayal!") fails the header charset, and the parser would
-   otherwise glue that whole entry onto the PREVIOUS entry's prose. After
-   sanitizing, a sloppy title costs nothing. Pure function — testable. */
-function ragParseExtraction(out) {
-  if (!out || /^\s*NONE\b/i.test(out)) return null;
-  const idx = out.search(/^\s*#\s*\S/m);
-  if (idx < 0) return null;
-  const text = out.slice(idx).split('\n').map(line => {
-    const m = line.match(/^\s*#{1,3}\s*(.+)$/);
-    if (!m) return line;
-    const t = ragSanitizeMemoryTitle(m[1]);
-    return t ? '# ' + t : line;
-  }).join('\n');
-  const parsed = parseStorybook(text);
-  return parsed.order.length ? parsed : null;
-}
-
-/* The extraction pass. Deferred and fire-and-forget from the compression
-   seam: the lore summary is needed synchronously (it replaces the
-   archived text in the very prompt being built), but memories only
-   matter for FUTURE turns — so this costs the current turn zero latency.
-   Same input hygiene as summarizeForLore: message content only, never
-   chain-of-thought. Degrades to a silent no-op on any failure; the raw
-   archived messages persist regardless, so nothing is ever lost to a
-   failed extraction. */
-async function ragExtractMemories(thread, archivedMsgs) {
-  try {
-    if (!thread || !archivedMsgs || !archivedMsgs.length) return;
-    if (!state.settings.retrievalEnabled || state.settings.memoryExtraction === false) return;
-
-    // Turn anchor — computed synchronously, before any await, while the
-    // indexes are still the ones the user saw.
-    const firstIdx = Math.max(0, thread.messages.indexOf(archivedMsgs[0]));
-    const lastIdx = Math.max(firstIdx, thread.messages.indexOf(archivedMsgs[archivedMsgs.length - 1]));
-    const t0 = Math.floor(firstIdx / 2) + 1;
-    const t1 = Math.floor(lastIdx / 2) + 1;
-    const anchor = t0 === t1 ? ('turn ' + t0) : ('turns ' + t0 + '\u2013' + t1);
-
-    const sys = 'You extract durable story memories from a roleplay transcript excerpt. '
-      + 'Output ONLY memory entries in exactly this format, nothing else:\n\n'
-      + '# short event title\n'
-      + 'tags: comma, separated, keywords\n'
-      + 'One to three sentences, past tense, beginning with the time anchor.\n\n'
-      + 'Rules:\n'
-      + '- 1 to ' + MEMORY_MAX_ENTRIES_PER_PASS + ' entries. Fewer, better entries beat many weak ones.\n'
-      + '- Each entry records ONE concrete event, decision, revelation, promise, injury, gain or loss, or relationship change that later scenes may depend on.\n'
-      + '- Title: 2-5 lowercase words naming the EVENT, never just a character\'s name.\n'
-      + '- tags: 3-8 lowercase keywords someone would plausibly say when this matters again — the people, places, objects, and topics involved. Plain words only, no weights, no brackets.\n'
-      + '- Prose: begin with "Around ' + anchor + ':" and state only facts from the excerpt. No speculation, no analysis, no commentary.\n'
-      + '- If nothing is worth remembering, output exactly: NONE';
-
-    let body = '=== TRANSCRIPT EXCERPT (around ' + anchor + ') ===\n';
-    for (const m of archivedMsgs) {
-      const text = m.content || '';  // intentionally NOT m.reasoning
-      if (!text) continue;
-      body += (m.role === 'user' ? 'User' : 'Assistant') + ': ' + text + '\n\n';
-    }
-    body += '=== END ===\nExtract the memory entries now.';
-
-    const out = await ragLocalCompletion(sys, body, { max_tokens: 700, temperature: 0.2 });
-    const parsed = ragParseExtraction(out);
-    if (!parsed) return;
-
-    // The thread may have been deleted while the model was generating.
-    if (!state.threads.some(t => t.id === thread.id)) return;
-
-    const n = ragAppendMemories(thread, parsed);
-    if (!n) return;
-    console.info('[memory] distilled ' + n + ' story memor' + (n === 1 ? 'y' : 'ies') + ' (around ' + anchor + ')');
-    ragNotifyMemories(thread, n);
-  } catch (e) { /* degrade silently — the archived messages persist regardless */ }
-}
-
-/* Light-touch surfacing of a completed background extraction: transient
-   indicator on the active thread (self-clearing, and only clearing its
-   OWN text so it can't stomp a live "compressing..." status), plus a live
-   refresh of the memory modal if it's open on this thread. */
-function ragNotifyMemories(thread, n) {
-  try {
-    if (getActiveThread() !== thread) return;
-    const note = 'archived scene distilled into ' + n + ' story memor' + (n === 1 ? 'y' : 'ies');
-    renderLoreIndicator(note);
-    setTimeout(() => {
-      const el = document.querySelector('.lore-indicator');
-      if (el && (el.textContent || '').indexOf('story memor') !== -1) renderLoreIndicator('');
-    }, 6000);
-    const modal = document.getElementById('memory-modal');
-    if (modal && modal.classList.contains('open') && _memoryModalThreadId === thread.id) {
-      const ta = document.getElementById('memory-text');
-      if (ta) ta.value = thread.ragMemories || '';
-      updateMemoryReadout();
-    }
-  } catch (e) {}
-}
-
-/* ---- Memory modal (🧠 in the chat header) ---- */
-let _memoryModalThreadId = null;
-
-function openMemoryModal() {
-  const t = getActiveThread();
-  if (!t) return;
-  _memoryModalThreadId = t.id;
-  const ta = document.getElementById('memory-text');
-  if (ta) ta.value = t.ragMemories || '';
-  const cb = document.getElementById('memory-auto-extract');
-  if (cb) cb.checked = state.settings.memoryExtraction !== false;
-  updateMemoryReadout();
-  document.getElementById('memory-modal').classList.add('open');
-}
-
-function closeMemoryModal() {
-  document.getElementById('memory-modal').classList.remove('open');
-  _memoryModalThreadId = null;
-}
-
-function saveMemoryModal() {
-  const t = getActiveThread();
-  if (t && t.id === _memoryModalThreadId) {
-    t.ragMemories = document.getElementById('memory-text').value;
-    ragIngestMemories(t);   // warm the embed cache for anything new
-  }
-  const cb = document.getElementById('memory-auto-extract');
-  if (cb) state.settings.memoryExtraction = !!cb.checked;
-  saveState();
-  closeMemoryModal();
-}
-
-function updateMemoryReadout() {
-  const el = document.getElementById('memory-readout');
-  if (!el) return;
-  try {
-    const ta = document.getElementById('memory-text');
-    const parsed = parseStorybook((ta && ta.value) || '');
-    const parts = [parsed.counts.entities + ' memor' + (parsed.counts.entities === 1 ? 'y' : 'ies')];
-    if (parsed.counts.subtrees) parts.push(parsed.counts.subtrees + ' subtrees');
-    parts.push(parsed.counts.tags + ' tags');
-    if (parsed.counts.aliases) parts.push(parsed.counts.aliases + ' aliases');
-    el.textContent = 'parsed \u2192 ' + parts.join(' \u00b7 ');
-  } catch (e) {
-    el.textContent = 'parse error: ' + (e && e.message);
-  }
 }
 
 /* Per-thread warmth state (anti-flicker). Kept in-memory only — it is
@@ -6322,11 +5202,7 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
       semantic_backstop: !!cfg.semanticBackstop,
       embed_available: false,          // set true below if a query embed succeeds
       top_k_a: cfg.topKA,
-      retrieval_budget_tokens: cfg.retrievalBudgetTokens,
-      recency_weights: RAG_RECENCY_WEIGHTS.slice(),
-      echo_discount: RAG_ECHO_DISCOUNT,
-      identity_floor_msgs: RAG_IDENTITY_FLOOR_MSGS,
-      memory_extraction: cfg.memoryExtraction !== false
+      retrieval_budget_tokens: cfg.retrievalBudgetTokens
     },
     window: { messages_scanned: 0, tokens_scanned: 0, hash: '' },
     budget: budgetSnapshot,
@@ -6352,58 +5228,26 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
   };
 
   try {
-    if (!cfg.retrievalEnabled) { record.budget.retrieval_tokens = 0; _ragLastTurnSummary = null; return finish(); }
+    if (!cfg.retrievalEnabled) { record.budget.retrieval_tokens = 0; return finish(); }
 
-    // Combined trigger/doc surface: the card's authored storybook plus
-    // this thread's story memories (same grammar, merged per turn — see
-    // ragCombinedBook for the collision rules). Telemetry keeps the card
-    // stats sourced from the card book alone so authored size stays
-    // legible; memories are reported separately.
-    const cardBook = getCardStorybook(card);
-    const memBook = getThreadMemoryBook(thread);
-    const book = ragCombinedBook(card, thread);
+    const book = getCardStorybook(card);
     record.cards_in_play.push({
       card_id: card.id,
-      tag_count: cardBook.order.reduce((n, id) => n + cardBook.entities[id].tags.length, 0),
-      weight_total: cardBook.order.reduce((n, id) => n + cardBook.entities[id].tags.reduce((s, t) => s + t.weight, 0), 0),
-      subtree_count: cardBook.counts.subtrees
+      tag_count: book.order.reduce((n, id) => n + book.entities[id].tags.length, 0),
+      weight_total: book.order.reduce((n, id) => n + book.entities[id].tags.reduce((s, t) => s + t.weight, 0), 0),
+      subtree_count: book.counts.subtrees
     });
-    if (memBook.order.length || memBook.proseChunks.length) {
-      record.memories = {
-        entities: memBook.counts.entities,
-        subtrees: memBook.counts.subtrees,
-        prose_chunks: memBook.proseChunks.length
-      };
-    }
 
     // Nothing authored → still emit a (cheap) record so the per-turn contract
     // holds, but skip all the work.
     const hasContent = book.order.length > 0 || book.proseChunks.length > 0;
-    if (!hasContent) { record.budget.retrieval_tokens = 0; _ragLastTurnSummary = null; return finish(); }
+    if (!hasContent) { record.budget.retrieval_tokens = 0; return finish(); }
 
     // ---- recent window (trigger surface) ----
     const live = thread.messages.filter(m => !m.archived);
     const win = live.slice(-Math.max(1, cfg.retrievalWindowMsgs || 4));
     const windowText = win.map(m => m.content || m.reasoning || '').join('\n');
-    // Recency-weighted, role-aware segments for Retriever B. The newest
-    // message matches at full strength; older ones decay per
-    // RAG_RECENCY_WEIGHTS, and the model's own messages are discounted by
-    // RAG_ECHO_DISCOUNT — the model repeating our injection back at us is
-    // not evidence of anything. identityEligible marks the segments
-    // (user-authored, within the newest RAG_IDENTITY_FLOOR_MSGS) where a
-    // name/alias mention still earns the identity floor; anywhere older it
-    // just adds decayed weight and the entity fades into warmth instead of
-    // being pinned at the top of the budget.
-    const winSegs = win.map((m, i) => {
-      const age = win.length - 1 - i; // 0 = newest
-      const rw = RAG_RECENCY_WEIGHTS[Math.min(age, RAG_RECENCY_WEIGHTS.length - 1)];
-      const echo = m.role === 'assistant' ? RAG_ECHO_DISCOUNT : 1;
-      return {
-        text: String(m.content || m.reasoning || '').toLowerCase(),
-        mult: rw * echo,
-        identityEligible: age < RAG_IDENTITY_FLOOR_MSGS && m.role !== 'assistant'
-      };
-    });
+    const windowLower = windowText.toLowerCase();
     record.window.messages_scanned = win.length;
     record.window.tokens_scanned = estimateTokens(windowText);
     record.window.hash = 'fnv:' + ragHash(windowText);
@@ -6416,68 +5260,63 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
         id, kind: e ? e.kind : 'doc', parent: e ? e.parent : null,
         triggers: new Set(), matched_tags: [], weight_sum: 0, semScore: 0,
         offscreen: e ? e.offscreenDefault : false,
-        isMemory: e ? !!e.isMemory : String(id).indexOf('mem:') === 0,
         role: e ? e.roleInArcs : '', use: e ? e.usePrinciples : '',
         prose: e ? e.prose : ''
       };
       return cand[id];
     };
 
-    // per-entity weight sums (also used for the shadow recompute). Computed
-    // by the SAME helper the editor's Test-fire box uses (ragEntityHits) —
-    // title/alias identity terms are folded in there, so a tag-less
-    // "# title + blurb" entry fires on a name mention like anything else.
-    let weightSums = {}; // id -> { sum, matched:[{term,weight}], identityHit:bool, nameHit:bool }
+    // per-entity weight sums (also used for the shadow recompute)
+    const weightSums = {}; // id -> { sum, matched:[{term,weight}], identityHit:bool, nameHit:bool }
 
-    // ---- Retriever B: weighted-tag + identity-name firing ----
+    // ---- Retriever B: weighted-tag firing ----
     if (cfg.retrieverB) {
-      weightSums = ragEntityHits(book, winSegs, cfg);
       for (const id of book.order) {
-        const ws = weightSums[id];
-        // Fire on the decayed weight-sum crossing threshold, OR on a fresh
-        // identity hit: a name spoken in the newest message-or-two must
-        // fire even when its recency-decayed sum alone falls short (a name
-        // in the 2nd-newest user message contributes only 0.6 × T). This
-        // is the identity floor's entry point.
-        if (!ws || (ws.sum < cfg.fireThreshold && !ws.identityHit)) continue;
-        const c = touch(id);
-        c.matched_tags = ws.matched;
-        c.weight_sum = ws.sum;
-        c.triggers.add(ws.identityHit ? 'identity' : 'thematic_cluster');
-        c._nameHit = ws.nameHit;
+        const e = book.entities[id];
+        if (!e.tags.length) continue;
+        let sum = 0; const matched = []; let identityHit = false;
+        for (const t of e.tags) {
+          const re = new RegExp('\\b' + t.term.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
+          if (re.test(windowLower)) {
+            matched.push({ term: t.term, weight: t.weight });
+            sum += t.weight;
+            if (t.weight >= cfg.fireThreshold) identityHit = true;
+          }
+        }
+        // explicit name mention (entity id or its leaf name) bypasses suppression
+        const leaf = id.split('.').pop();
+        const nameHit = new RegExp('\\b' + leaf.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(windowLower);
+        weightSums[id] = { sum, matched, identityHit, nameHit };
+
+        if (sum >= cfg.fireThreshold) {
+          const c = touch(id);
+          c.matched_tags = matched;
+          c.weight_sum = sum;
+          c.triggers.add(identityHit ? 'identity' : 'thematic_cluster');
+          c._nameHit = nameHit;
+        }
       }
     }
 
     // ---- Retriever A: semantic (+ backstop). Query embed is the only
-    //      per-turn embed call; doc SEGMENT vectors are cached from ingest.
-    //      The query is capped to RAG_QUERY_TOKENS (tail-preferring) so a
-    //      long window can't 400 the embed call and silently switch A off;
-    //      docs score as the max over their embed-safe segments. ----
+    //      per-turn embed call; doc vectors are cached from ingest. ----
     const docs = ragBuildDocPool(book);
     if (cfg.retrieverA && docs.length) {
-      const qvec = await ragEmbedRaw(ragQueryTextFromWindow(win), 'query');
+      const qvec = await ragEmbedRaw(windowText, 'query');
       if (qvec) {
         record.config.embed_available = true;
         const scored = [];
         for (const d of docs) {
-          const ds = await ragDocSim(qvec, d.text);
-          if (ds.embedded === 0) {
-            // Server is up (query embedded) but every segment of this doc
-            // was rejected/failed — the old silent-invisibility bug, now
-            // surfaced in telemetry and once per session on the console.
-            if (record.flags.missing.indexOf(d.id) === -1) record.flags.missing.push(d.id);
-            if (!_ragEmbedFailWarned.has(d.id)) {
-              _ragEmbedFailWarned.add(d.id);
-              console.warn('[rag] doc "' + d.id + '" could not be embedded — invisible to Retriever A this session. Check embed-server.log.');
-            }
-            continue;
-          }
-          scored.push({ d, sim: ds.sim });
+          const dv = await ragEmbedCached(d.text, 'document');
+          if (!dv) continue;
+          const sim = ragCosine(qvec, dv);
+          scored.push({ d, sim });
         }
         scored.sort((a, b) => b.sim - a.sim);
+        const SEM_FLOOR = 0.25;
         let taken = 0;
         for (const s of scored) {
-          if (s.sim < RAG_SEM_FLOOR) break;
+          if (s.sim < SEM_FLOOR) break;
           if (taken >= (cfg.topKA || 5)) break;
           taken++;
           const targetId = s.d.entityId || s.d.id;
@@ -6490,23 +5329,10 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
     }
 
     // ---- relational one-hop expansion (gated by offscreen_default) ----
-    // Expansion sources are pre-checked against the SAME suppression rule
-    // the ranker applies later: a thematic-only hit on an offscreen entity
-    // is going to be vetoed, so it must not pull its relations in first.
     if (cfg.expansionDepth >= 1 && cfg.retrieverB) {
       const fired = Object.keys(cand).filter(id => cand[id].triggers.has('identity')
         || cand[id].triggers.has('thematic_cluster'));
-      const willBeSuppressed = (id) => {
-        const c = cand[id];
-        if (!c || !c.offscreen || c.kind !== 'entity') return false;
-        const onlyThematic = c.triggers.has('thematic_cluster')
-          && !c.triggers.has('identity') && !c._nameHit;
-        if (!onlyThematic) return false;
-        const subtreeFired = fired.some(o => cand[o].parent === id);
-        return !subtreeFired;
-      };
       for (const id of fired) {
-        if (willBeSuppressed(id)) continue;
         const e = book.entities[id];
         if (!e) continue;
         for (const rel of e.relations) {
@@ -6548,27 +5374,9 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
     for (const id of Object.keys(cand)) {
       const c = cand[id];
       const tt = triggerType(c);
-      // base score: blend weight-sum and semantic similarity.
-      //   wScore = w/(w+T): 0.5 at threshold, keeps climbing with margin —
-      //     the old min(1, w/2T) pinned everything past 2×T to the same
-      //     rank, erasing the author's weights right when they mattered.
-      //   semN: cosine rescaled above RAG_SEM_FLOOR onto 0..1, so raw
-      //     cosine (where 0.25 is noise) stops arm-wrestling normalized
-      //     tag sums on an uncalibrated shared scale.
-      //   noisy-OR blend: corroboration (tags AND semantics) outranks
-      //     either signal alone, instead of max() discarding the weaker.
-      //   identity floor: a FRESH direct name/alias mention (user message
-      //     within the newest RAG_IDENTITY_FLOOR_MSGS — gated upstream in
-      //     ragEntityHits) is the strongest retrieval signal the user can
-      //     send — it must win the budget. Stale or model-echoed mentions
-      //     no longer arm the floor; they contribute decayed weight and
-      //     the entity fades into warmth.
-      const T = cfg.fireThreshold || 1.0;
-      const wScore = c.weight_sum > 0 ? c.weight_sum / (c.weight_sum + T) : 0;
-      const semN = c.semScore > RAG_SEM_FLOOR
-        ? (c.semScore - RAG_SEM_FLOOR) / (1 - RAG_SEM_FLOOR) : 0;
-      let base = 1 - (1 - wScore) * (1 - semN);
-      if (c.triggers.has('identity')) base = Math.max(base, 0.7);
+      // base score: blend normalized weight-sum and semantic similarity
+      const wScore = c.weight_sum > 0 ? Math.min(1, c.weight_sum / (cfg.fireThreshold * 2)) : 0;
+      let base = Math.max(wScore, c.semScore);
       if (tt === 'warmth' || tt === 'relational') base *= 0.6; // dampen sticky/expanded pulls
       const score = +(base * roleBoost(c.role)).toFixed(4);
 
@@ -6591,8 +5399,7 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
     // so budget is spent once. If the same entity surfaced via both, its
     // record carries multiple trigger flags; the canonical trigger_type is the
     // strongest one. (No separate dup rows needed — one id, one budget charge.)
-    // Ties break toward authored canon over story memories (ragRankCompare).
-    ranked.sort(ragRankCompare);
+    ranked.sort((a, b) => b.score - a.score);
 
     // ---- budget fill ----
     const retrievalCeiling = Math.max(0, Math.min(cfg.retrievalBudgetTokens || 0, Math.floor(freeForRetrieval)));
@@ -6618,7 +5425,7 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
         continue;
       }
       spent += tokenCost;
-      injections.push({ entityId: r.id, header: ragInjectionHeader(r.id, e), text: injectText, tokenCost });
+      injections.push({ entityId: r.id, text: injectText, tokenCost });
       record.candidates.push(_ragCandRow(r, tokenCost, true, null, !!usePrinciples));
       // re-light warmth for anything actually included via a real fire
       if (r.tt === 'identity' || r.tt === 'thematic_cluster' || r.tt === 'semantic') {
@@ -6627,35 +5434,8 @@ async function runRetrieval(thread, card, freeForRetrieval, budgetSnapshot) {
     }
     record.budget.retrieval_tokens = spent;
 
-    // ---- Stage 2 handoff: compact summary for the 📖 chip ----
-    // Deposited only when the turn had candidates at all; consumed once by
-    // the send/reroll flow and pinned onto the assistant message. Kept
-    // tiny (ids + trigger + score + reason) because it persists with the
-    // thread — the full record still lives in telemetry.
-    if (record.candidates.length) {
-      _ragLastTurnSummary = {
-        t: record.turn_id,
-        spent,
-        aOn: !!record.config.embed_available,
-        pulled: record.candidates.filter(x => x.included).map(x => ({
-          id: x.cand_id, tt: x.trigger_type, s: x.score, tok: x.token_cost,
-          mem: x.source === 'memory' ? 1 : 0
-        })),
-        evicted: record.candidates.filter(x => !x.included).map(x => ({
-          id: x.cand_id, tt: x.trigger_type, why: x.eviction_reason || 'unknown',
-          mem: x.source === 'memory' ? 1 : 0
-        })),
-        missing: record.flags.missing.slice(0, 8)
-      };
-    } else {
-      _ragLastTurnSummary = null;
-    }
-
     // ---- shadow: cheap counterfactuals from the SAME window ----
-    // Mirrors the live fire rule: a fresh identity hit fires at ANY
-    // threshold, so it appears in every counterfactual too.
-    const firedAt = (thr) => book.order.filter(id => weightSums[id]
-      && (weightSums[id].sum >= thr || weightSums[id].identityHit));
+    const firedAt = (thr) => book.order.filter(id => weightSums[id] && weightSums[id].sum >= thr);
     const baseFired = firedAt(cfg.fireThreshold);
     const tokAt = (ids) => ids.reduce((n, id) => {
       const e = book.entities[id]; return n + (e && e.prose ? estimateTokens(e.prose) + 4 : 0);
@@ -6683,7 +5463,6 @@ function _ragCandRow(r, tokenCost, included, evictionReason, useAttached) {
     kind: r.c.kind,
     parent_entity: r.c.parent,
     trigger_type: r.tt,
-    source: r.c && r.c.isMemory ? 'memory' : 'card',
     matched_tags: r.c.matched_tags,
     weight_sum: +(r.c.weight_sum || 0).toFixed(3),
     score: r.score,
@@ -6871,14 +5650,6 @@ async function buildContextMessages(thread, card, opts) {
       // renderMessages; cleared at the start of the next user turn.
       pendingLoreCompressionNote = { count: toArchive.length, threadId: thread.id };
 
-      // Story-memory extraction (deferred, fire-and-forget). The summary
-      // above was needed synchronously — it replaces the archived text in
-      // THIS very prompt — but memories only matter for future turns, so
-      // they cost this turn zero latency. The archived messages persist in
-      // thread.messages regardless, so a failed or disabled extraction
-      // loses nothing that can't be re-derived later.
-      ragExtractMemories(thread, toArchive.slice());
-
       // Recompute post-archive state. usedTokens now reflects the new
       // (typically smaller) lore — this is what gets returned to the
       // caller as tokensUsed so the status bar shows reality.
@@ -6963,15 +5734,11 @@ async function buildContextMessages(thread, card, opts) {
         try {
           const bk = getCardStorybook(card);
           for (const id of bk.order) for (const t of bk.entities[id].tags) allTerms.push(t.term);
-          // Memory tags carry weights too ("docks [0.6]") — scrub theirs as well.
-          const mk = getThreadMemoryBook(thread);
-          for (const id of mk.order) for (const t of mk.entities[id].tags) allTerms.push(t.term);
         } catch (e) {}
         const scrubbed = ragScrubWeightAnnotations(inj.text, allTerms);
         apiMessages.push({
           role: 'system',
-          content: (inj.header || ('[Storybook: ' + inj.entityId + ']'))
-            + '\n' + translateTemplates(scrubbed, charName, userName)
+          content: '[Storybook: ' + inj.entityId + ']\n' + translateTemplates(scrubbed, charName, userName)
         });
       }
     } catch (e) {
@@ -6990,26 +5757,9 @@ async function buildContextMessages(thread, card, opts) {
     saveState();
   }
 
-  // Response-length nudge — the "target" half of the governor (the
-  // boundary trim after streaming is the "ceiling" half). Injected in the
-  // recency slot right before the LAST USER message, same trick as the
-  // carousel. Keyed on the last user-role index rather than isLastUserMsg
-  // so REROLLS — where a cleared assistant slot trails the user turn —
-  // still get the nudge.
-  const lengthNudge = buildLengthNudgeLine(card);
-  let lastUserIdx = -1;
-  if (lengthNudge) {
-    for (let i = finalRecent.length - 1; i >= 0; i--) {
-      if (finalRecent[i].role === 'user') { lastUserIdx = i; break; }
-    }
-  }
-
   for (let i = 0; i < finalRecent.length; i++) {
     const m = finalRecent[i];
     const isLastUserMsg = m.role === 'user' && i === finalRecent.length - 1;
-    if (lengthNudge && i === lastUserIdx) {
-      apiMessages.push({ role: 'system', content: translateTemplates(lengthNudge, charName, userName) });
-    }
     // Just before the final user turn, in ascending priority: the optional
     // per-response narrative nudge, then the USER's persona LAST so it sits
     // immediately against the user message (recency = highest weight). The
@@ -7525,11 +6275,6 @@ async function sendMessage(overrideContent) {
   // again; if not, it stays cleared and no banner renders.
   pendingLoreCompressionNote = null;
 
-  // Response timer: the clock starts the moment the send is committed —
-  // context build (compression, retrieval) counts, because the user is
-  // already waiting through it.
-  startGenClock();
-
   let thread = getActiveThread();
   if (!thread) {
     createThread();
@@ -7623,11 +6368,6 @@ async function sendMessage(overrideContent) {
   renderAutoContinueIndicator();   // flip indicator to "generating post N…"
 
   const assistantMsg = { role: 'assistant', content: '', timestamp: Date.now() };
-  // Pin this turn's retrieval summary (deposited by runRetrieval inside
-  // buildContextMessages above) onto the reply — renderMessages draws the
-  // 📖 chip from it. Consume-once, so nothing stale can attach later.
-  const _ragSum = consumeRagTurnSummary();
-  if (_ragSum) assistantMsg.retrieval = _ragSum;
   thread.messages.push(assistantMsg);
   renderMessages();
   scrollToBottom();
@@ -7647,13 +6387,6 @@ async function sendMessage(overrideContent) {
   try {
     const logitBiasParams = await buildLogitBias(card);
     const _stopParams = getStopStrings();
-    // Length governor — watches the VISIBLE reply as it streams and stops
-    // generation at the first clean boundary past the card's soft budget.
-    // max_tokens stays -1 below on purpose: a server-side cap counts
-    // THINKING tokens too, so a tight value would blank out reasoning
-    // models — and it clips mid-word besides. Only content is metered
-    // here; reasoning streams free. See RESPONSE LENGTH GOVERNOR.
-    const respGovernor = createResponseGovernor(card);
     console.log('[gen] family=' + ((activeModel && activeModel.family) || 'unknown') +
                 ' stop=' + JSON.stringify(_stopParams.stop || []) +
                 '  (run gobboDiag() to dump the exact prompt the model receives)');
@@ -7692,19 +6425,10 @@ async function sendMessage(overrideContent) {
         chunkCount++;
         const result = extractTokenFromLine(line);
         if (result) {
-          markGenFirstToken();   // response timer: first-token latency
           processStreamDelta(assistantMsg, result.text, result.field);
         } else if (chunkCount <= 3) {
           console.log('[stream] Unparsed line ' + chunkCount + ':', JSON.stringify(line.trim().slice(0, 200)));
         }
-      }
-      // Soft budget reached AND a clean boundary exists — stop paying for
-      // tokens the boundary trim would discard anyway. The abort lands in
-      // the catch below as a designed stop (_lengthCut), not an error.
-      if (respGovernor && abortController && governorWantsCut(respGovernor, assistantMsg)) {
-        console.log('[length] Boundary past soft cap — stopping generation early.');
-        abortController._lengthCut = true;
-        abortController.abort();
       }
       // Live render tokens as they arrive (throttled to ~80ms).
       // Uses surgical DOM patching to avoid full innerHTML replace and flicker.
@@ -7745,13 +6469,7 @@ async function sendMessage(overrideContent) {
   } catch (err) {
     sendErrored = true;
     if (err.name === 'AbortError') {
-      if (abortController && abortController._lengthCut) {
-        // Governor stop — a designed finish, not an error. Flush the parser
-        // now (the in-try finalize was skipped by the abort); the boundary
-        // trim in the settle block below lands the text on the cut.
-        sendErrored = false;
-        finalizeStreamMessage(assistantMsg);
-      } else if (abortController && abortController._cotCulled) {
+      if (abortController && abortController._cotCulled) {
         const mins = state.settings.cotTimeoutMinutes || 2;
         assistantMsg.content += `\n\n*(auto-stopped — runtime exceeded ${mins} min limit. If this happens often, raise the timer in CONFIG.)*`;
       } else {
@@ -7770,16 +6488,9 @@ async function sendMessage(overrideContent) {
     }
   }
 
-  // Length governor, enforcement half: land the final text on the boundary.
-  // Runs on clean finishes AND governor stops. Skipped when the user hit
-  // Stop or the request errored — their partial (plus its status note) is
-  // left exactly as-is.
-  if (!sendErrored) applyResponseLengthTrim(assistantMsg, card);
-
   clearCotWatchdog();
   isGenerating = false;
   abortController = null;
-  finishGenClock(assistantMsg);   // lands m.genMs/m.ttftMs before the save below
   saveState();
   // The turn has settled (content is final, even on abort/error). Push to the
   // server backup NOW instead of waiting out the 2s debounce — if the user
@@ -7787,13 +6498,19 @@ async function sendMessage(overrideContent) {
   // never reach /state and a later restore from a cleared origin would blank
   // it. flushStateSync is a no-op if the state is still transient.
   forceServerFlush();
+  // Capture follow intent BEFORE the rebuild below — renderMessages() resets
+  // scrollTop to 0 and the resulting scroll event clears scrollPinnedToBottom
+  // a frame before any pin-aware scroll could run, which would otherwise leave
+  // the finished reply stranded a few messages up instead of at the bottom.
+  const wasFollowing = scrollPinnedToBottom;
   updateInputState();
   renderMessages();
-  // Pin-aware: if the user is still following we land at the bottom; if they
-  // touched/scrolled away mid-stream we leave them where they're reading
-  // instead of yanking them down the moment generation ends. updateInputState
-  // above already refreshed the FAB so it stays offered in the unfollowed case.
-  autoScrollToBottom();
+  // Land at the settled bottom if the user was still following when the stream
+  // ended; if they touched/scrolled away mid-stream we leave them where they're
+  // reading. The forced scroll inside settleScrollAfterGeneration overrides the
+  // transient pin-flip the rebuild just caused. (updateInputState above already
+  // refreshed the FAB so it stays offered in the unfollowed case.)
+  settleScrollAfterGeneration(wasFollowing);
   updateContextInfo();
 
   // Advance the auto-continue chain if one is active. Errors (including
@@ -8058,11 +6775,6 @@ function syncActiveVariant(msg) {
   v.attachmentText = msg.attachmentText;
   v.attachments    = msg.attachments;
   v.timestamp  = msg.timestamp || v.timestamp || Date.now();
-  // Response-timer fields ride with the variant so the ◀ ▶ navigator shows
-  // the time the DISPLAYED reply actually took, not whichever reroll
-  // happened to run last.
-  v.genMs  = msg.genMs;
-  v.ttftMs = msg.ttftMs;
 }
 
 /** Mirror the active variant's fields back onto the top-level message. */
@@ -8092,10 +6804,6 @@ function applyVariantToMessage(msg) {
     delete msg.attachments;
   }
   if (v.timestamp) msg.timestamp = v.timestamp;
-  // Delete-when-absent, same as the fields above: a variant recorded
-  // before the timer existed shouldn't inherit another variant's numbers.
-  if (isFinite(v.genMs) && v.genMs > 0) msg.genMs = v.genMs; else delete msg.genMs;
-  if (isFinite(v.ttftMs) && v.ttftMs > 0) msg.ttftMs = v.ttftMs; else delete msg.ttftMs;
 }
 
 /**
@@ -8204,10 +6912,6 @@ async function regenerateFromThread(options = {}) {
   // Same reset as sendMessage — fresh turn starts without a stale marker.
   pendingLoreCompressionNote = null;
 
-  // Response timer — same semantics as sendMessage: from the reroll /
-  // scheduled trigger to settle, everything the user waits through.
-  startGenClock();
-
   const card = getActiveCard();
 
   // Optional web search — used by scheduler
@@ -8250,12 +6954,6 @@ async function regenerateFromThread(options = {}) {
     assistantMsg = { role: 'assistant', content: '', timestamp: Date.now() };
     thread.messages.push(assistantMsg);
   }
-  // Refresh the 📖 chip data for THIS generation — a reroll re-ran
-  // retrieval against the current window, so the previous variant's
-  // summary no longer describes what this reply was built from.
-  const _ragSum = consumeRagTurnSummary();
-  if (_ragSum) assistantMsg.retrieval = _ragSum;
-  else delete assistantMsg.retrieval;
   renderMessages();
   scrollToBottom();
   // New stream → follow it (mirrors sendMessage).
@@ -8265,16 +6963,9 @@ async function regenerateFromThread(options = {}) {
   abortController = new AbortController();
   startCotWatchdog();
 
-  // Set when the stream ends on a user Stop, watchdog cull, or hard error —
-  // those finishes keep their partial text (and status note) untrimmed.
-  let hardStop = false;
-
   try {
     const logitBiasParams = await buildLogitBias(card);
     const _stopParams = getStopStrings();
-    // Length governor — see the full note in sendMessage. max_tokens stays
-    // -1; the visible reply is metered client-side instead.
-    const respGovernor = createResponseGovernor(card);
     console.log('[gen] family=' + ((activeModel && activeModel.family) || 'unknown') +
                 ' stop=' + JSON.stringify(_stopParams.stop || []) +
                 '  (run gobboDiag() to dump the exact prompt the model receives)');
@@ -8299,14 +6990,7 @@ async function regenerateFromThread(options = {}) {
       buffer = lines.pop() || '';
       for (const line of lines) {
         const result = extractTokenFromLine(line);
-        if (result) { markGenFirstToken(); processStreamDelta(assistantMsg, result.text, result.field); }
-      }
-      // Soft budget reached AND a clean boundary exists — stop early; the
-      // trim below lands the text on the boundary. See sendMessage.
-      if (respGovernor && abortController && governorWantsCut(respGovernor, assistantMsg)) {
-        console.log('[length] Boundary past soft cap — stopping generation early.');
-        abortController._lengthCut = true;
-        abortController.abort();
+        if (result) processStreamDelta(assistantMsg, result.text, result.field);
       }
       const now = Date.now();
       if (now - lastRender > 80) {
@@ -8322,35 +7006,19 @@ async function regenerateFromThread(options = {}) {
     }
   } catch (err) {
     if (err.name === 'AbortError') {
-      if (abortController && abortController._lengthCut) {
-        // Governor stop — designed finish. finalizeStreamMessage below
-        // flushes the parser; the trim after it lands on the boundary.
-      } else if (abortController && abortController._cotCulled) {
+      if (abortController && abortController._cotCulled) {
         const mins = state.settings.cotTimeoutMinutes || 2;
         assistantMsg.content += `\n\n*(auto-stopped — runtime exceeded ${mins} min limit. If this happens often, raise the timer in CONFIG.)*`;
-        hardStop = true;
       } else {
         assistantMsg.content += '\n\n*(generation stopped)*';
-        hardStop = true;
       }
     } else {
       assistantMsg.content = `**Error:** ${err.message}`;
-      hardStop = true;
     }
   }
 
   // Flush parser state and scrub any format-specific stray markers
   finalizeStreamMessage(assistantMsg);
-
-  // Length governor, enforcement half — must run BEFORE syncActiveVariant
-  // below so the variant slot stores the trimmed text, not the overflow.
-  // Skipped on user Stop / watchdog cull / error (hardStop): those keep
-  // their partial text and status note exactly as-is.
-  if (!hardStop) applyResponseLengthTrim(assistantMsg, card);
-
-  // Response timer: land m.genMs/m.ttftMs BEFORE the variant sync below,
-  // so the active slot captures this generation's numbers.
-  finishGenClock(assistantMsg);
 
   // If this message has a variants array (i.e. the user has rerolled
   // it at least once), persist the just-streamed content into the
@@ -8365,9 +7033,10 @@ async function regenerateFromThread(options = {}) {
   abortController = null;
   saveState();
   forceServerFlush();   // collapse the debounce — see sendMessage for rationale
+  const wasFollowing = scrollPinnedToBottom;   // capture before the rebuild clobbers the pin
   updateInputState();
   renderMessages();
-  autoScrollToBottom();   // pin-aware end-of-stream scroll (see sendMessage)
+  settleScrollAfterGeneration(wasFollowing);   // pin-aware end-of-stream scroll (see sendMessage)
   updateContextInfo();
 }
 
@@ -9176,108 +7845,6 @@ function renderLandingPage() {
     </div>`;
 }
 
-/* ================================================================
-   RESPONSE TIMER
-   Wall-clock from the moment a generation is committed (send click,
-   reroll, scheduled fire) to the moment it settles. Context build —
-   compression, retrieval — counts, because the user is already
-   waiting through it; so do prompt processing and streaming. The
-   result lives on the message (m.genMs, m.ttftMs), so history keeps
-   its numbers across reloads; the chip tooltip carries first-token
-   latency and a rough tokens/sec.
-================================================================ */
-let _genClock = null;   // { start, ttft, interval } — one generation at a time (isGenerating gate)
-
-function fmtGenTime(ms) {
-  if (!isFinite(ms) || ms < 0) return '';
-  if (ms < 10000) return (ms / 1000).toFixed(1) + 's';
-  const total = Math.round(ms / 1000);
-  if (total < 60) return total + 's';
-  return Math.floor(total / 60) + 'm ' + String(total % 60).padStart(2, '0') + 's';
-}
-
-function startGenClock() {
-  if (_genClock && _genClock.interval) clearInterval(_genClock.interval);
-  _genClock = { start: Date.now(), ttft: 0, interval: null };
-  // Live tick: updates the streaming message's chip in place. Full
-  // re-renders during the stream re-create the element (the template
-  // renders it whenever isGenerating points at that message), so the
-  // interval just keeps whatever instance currently exists fresh.
-  _genClock.interval = setInterval(() => {
-    const el = document.getElementById('gen-clock-live');
-    if (el && _genClock) el.textContent = '\u23F1 ' + fmtGenTime(Date.now() - _genClock.start);
-  }, 250);
-}
-
-function markGenFirstToken() {
-  if (_genClock && !_genClock.ttft) _genClock.ttft = Date.now();
-}
-
-function finishGenClock(m) {
-  const c = _genClock;
-  _genClock = null;
-  if (!c) return;
-  if (c.interval) clearInterval(c.interval);
-  if (!m) return;
-  m.genMs = Date.now() - c.start;
-  if (c.ttft) m.ttftMs = c.ttft - c.start;
-  else delete m.ttftMs;   // stopped before any token arrived — no latency to report
-}
-
-/* The header chip. live=true renders the ticking element for the message
-   currently streaming; otherwise a static chip for any message that
-   carries a recorded time. Old messages without genMs render nothing. */
-function renderGenTime(m, live) {
-  if (live) {
-    const now = _genClock ? '\u23F1 ' + fmtGenTime(Date.now() - _genClock.start) : '\u23F1 \u2026';
-    return `<span class="gen-time" id="gen-clock-live" title="Elapsed since send — ticking until the response settles">${now}</span>`;
-  }
-  if (!m || !isFinite(m.genMs) || m.genMs <= 0) return '';
-  const bits = [];
-  if (isFinite(m.ttftMs) && m.ttftMs > 0) bits.push('first token ' + fmtGenTime(m.ttftMs));
-  const toks = estimateTokens((m.content || '') + (m.reasoning || ''));
-  if (toks > 0) {
-    bits.push('~' + toks + ' tok');
-    const genSec = (m.genMs - (m.ttftMs || 0)) / 1000;
-    if (genSec > 0.2) {
-      const rate = toks / genSec;
-      bits.push((rate < 10 ? rate.toFixed(1) : Math.round(rate)) + ' tok/s');
-    }
-  }
-  const tip = bits.length ? bits.join(' \u00b7 ') : 'total response time';
-  return `<span class="gen-time" title="${escapeHtml(tip)}">\u23F1 ${fmtGenTime(m.genMs)}</span>`;
-}
-
-/* Stage 2 visibility: build the 📖 badge + collapsible details block from
-   the compact retrieval summary pinned on an assistant message. Answers
-   "what did the storybook actually do on this turn" without opening F12. */
-const RAG_TT_LABEL = { identity: 'name', thematic_cluster: 'theme', semantic: 'semantic', relational: 'relation', warmth: 'warm', manual: 'manual' };
-const RAG_WHY_LABEL = { budget: 'over budget', offscreen_suppressed: 'offscreen', no_payload: 'no prose' };
-function renderRagChip(m) {
-  const r = m && m.retrieval;
-  if (!r) return { badge: '', block: '' };
-  const pulled = Array.isArray(r.pulled) ? r.pulled : [];
-  const evicted = Array.isArray(r.evicted) ? r.evicted : [];
-  if (!pulled.length && !evicted.length) return { badge: '', block: '' };
-  const badge = `<span class="rag-badge" title="Storybook retrieval — ${pulled.length} pulled, ${evicted.length} passed over. Details in the 📖 block on this message.">&#128214; ${pulled.length}</span>`;
-  const row = (icon, id, meta, warn) =>
-    `<div class="rag-row${warn ? ' rag-warn' : ''}">${icon} <span class="rag-id">${escapeHtml(String(id))}</span> <span class="rag-meta">${escapeHtml(meta)}</span></div>`;
-  let rows = pulled.map(p =>
-    row('&#10003;', (p.mem ? '\u{1F9E0} ' : '') + p.id, `${RAG_TT_LABEL[p.tt] || p.tt} · score ${Number(p.s || 0).toFixed(2)} · ~${p.tok || 0} tok`)).join('');
-  rows += evicted.map(x =>
-    row('&#10007;', (x.mem ? '\u{1F9E0} ' : '') + x.id, `${RAG_TT_LABEL[x.tt] || x.tt} · ${RAG_WHY_LABEL[x.why] || x.why}`)).join('');
-  if (Array.isArray(r.missing) && r.missing.length) {
-    rows += row('&#9888;', 'unembeddable', r.missing.join(', ') + ' — check embed-server.log', true);
-  }
-  const aNote = r.aOn === false ? ' · semantic off' : '';
-  const block = `
-        <details class="rag-block">
-          <summary class="rag-summary">&#128214; Storybook — ${pulled.length} pulled · ${evicted.length} passed over · ~${r.spent || 0} tok${aNote}</summary>
-          <div class="rag-content">${rows}</div>
-        </details>`;
-  return { badge, block };
-}
-
 function renderMessages() {
   const container = document.getElementById('messages');
   const thread = getActiveThread();
@@ -9461,8 +8028,6 @@ function renderMessages() {
     const isCurrentlyGenerating = isGenerating && !isUser && i === thread.messages.length - 1;
     const showTypingDots = isCurrentlyGenerating && !m.content && !m.reasoning;
     const searchBadge = m.searchData ? '<span class="search-badge" title="Web search results attached">&#128269;</span>' : '';
-    const ragChip = !isUser ? renderRagChip(m) : { badge: '', block: '' };
-    const genTime = !isUser ? renderGenTime(m, isCurrentlyGenerating) : '';
     
     // Render search results as a visible, linkified block
     let searchBlock = '';
@@ -9516,9 +8081,9 @@ function renderMessages() {
         <div class="msg-header">
           <span class="msg-avatar">${avatar}</span>
           <span class="message-role">${roleLabel}</span>
-          ${searchBadge}${ragChip.badge}${genTime}
+          ${searchBadge}
         </div>
-        ${cotBlock}${ragChip.block}
+        ${cotBlock}
         ${mainContent}
         <div class="message-actions">${actionsHtml}</div>
       </div>`;
@@ -9910,6 +8475,33 @@ function followToBottom() {
   updateFollowButton();   // hide now that we're pinned again
 }
 
+/** Settle the viewport after a generation-related full re-render.
+ *
+ *  Why this exists, and why it can't just call autoScrollToBottom():
+ *  renderMessages() rebuilds the thread via innerHTML, which resets the
+ *  container's scrollTop to 0. The browser then fires a scroll event for that
+ *  reset — and per the HTML spec the scroll steps run BEFORE requestAnimation-
+ *  Frame callbacks in the same frame. So the scroll listener sees scrollTop≈0,
+ *  concludes "miles from the bottom", and clears scrollPinnedToBottom a beat
+ *  BEFORE our deferred (pin-respecting) scroll would run. A pin-aware scroll
+ *  therefore reads false and bails, stranding the view a few messages up even
+ *  though the user never scrolled away. (This is exactly the end-of-stream
+ *  "hops up instead of sinking to the bottom" symptom.)
+ *
+ *  The cure is to decide using the follow state captured BEFORE the rebuild,
+ *  then issue a FORCED scrollToBottom() (no respectPin) so the transient flip
+ *  can't cancel it. The forced scroll moves the viewport to the true, settled
+ *  bottom, and the scroll event that results re-confirms scrollPinnedToBottom
+ *  = true. If the user had genuinely scrolled up mid-stream, wasFollowing is
+ *  false and we leave them where they're reading, just keeping the FAB offered. */
+function settleScrollAfterGeneration(wasFollowing) {
+  if (wasFollowing) {
+    scrollPinnedToBottom = true;   // restore the pin the innerHTML rebuild clobbered
+    scrollToBottom();              // forced jump to the settled final bottom
+  }
+  updateFollowButton();
+}
+
 function goHome() {
   state.activeThreadId = null;
   saveState();
@@ -10005,6 +8597,10 @@ function renderStreamingUpdate(assistantMsg) {
   const contentJustStarted = hasContent && cotBlock && cotBlock.classList.contains('cot-active');
 
   if (cotJustAppeared || contentJustStarted) {
+    // Capture follow intent BEFORE renderMessages() — its innerHTML rebuild
+    // resets scrollTop to 0 and the resulting scroll event clears the pin
+    // before a pin-aware scroll could run (see settleScrollAfterGeneration).
+    const wasFollowing = scrollPinnedToBottom;
     renderMessages();
     // After full re-render, seed the COT scroll position. This is a
     // one-time init right after the cot-content element is created,
@@ -10012,12 +8608,11 @@ function renderStreamingUpdate(assistantMsg) {
     // force-seed regardless of pin state.
     const freshCot = container.querySelector('.cot-block.cot-active .cot-content');
     if (freshCot) freshCot.scrollTop = freshCot.scrollHeight;
-    // Scroll page to bottom when content first appears — but only if
-    // the user is still pinned. If they scrolled up to read history
-    // during reasoning, the COT-to-content transition shouldn't yank
-    // them out of where they're reading.
-    if (contentJustStarted) autoScrollToBottom();
-    updateFollowButton();   // reveal the FAB if content is flooding below the fold
+    // Re-pin and land at the bottom across the transition, but only if the
+    // user was still following. If they scrolled up to read history during
+    // reasoning, wasFollowing is false and we leave them where they're
+    // reading; the FAB stays offered so they can jump back.
+    settleScrollAfterGeneration(wasFollowing);
     return;
   }
 
@@ -10257,11 +8852,6 @@ function editCard(id) {
   document.getElementById('card-xtc-threshold-val').textContent = xtcThr;
   document.getElementById('card-dry-mult').value = dryMult;
   document.getElementById('card-dry-mult-val').textContent = dryMult;
-  // Response-length governor (default off for cards saved before it existed)
-  const respTok = card.respTokens !== undefined ? card.respTokens : 0;
-  document.getElementById('card-resp-tokens').value = respTok;
-  document.getElementById('card-resp-tokens-val').textContent = (respTok == 0 ? 'Off' : respTok);
-  document.getElementById('card-resp-boundary').value = card.respBoundary === 'paragraph' ? 'paragraph' : 'sentence';
   // Banned phrases / logit bias
   document.getElementById('card-banned-phrases').value = card.bannedPhrases || '';
   const lbStrength = card.logitBiasStrength !== undefined ? card.logitBiasStrength : -20;
@@ -10319,8 +8909,6 @@ function saveCard() {
   card.xtcProbability = safeParse(document.getElementById('card-xtc-prob').value, 0);
   card.xtcThreshold = safeParse(document.getElementById('card-xtc-threshold').value, 0.1);
   card.dryMultiplier = safeParse(document.getElementById('card-dry-mult').value, 0);
-  card.respTokens = safeParse(document.getElementById('card-resp-tokens').value, 0, true);
-  card.respBoundary = document.getElementById('card-resp-boundary').value === 'paragraph' ? 'paragraph' : 'sentence';
   card.bannedPhrases = document.getElementById('card-banned-phrases').value;
   card.logitBiasStrength = safeParse(document.getElementById('card-logit-strength').value, -20);
   card.carouselEnabled = document.getElementById('card-carousel-enabled').checked;
