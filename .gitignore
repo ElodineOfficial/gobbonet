@@ -1,0 +1,22 @@
+# Secrets / user data — NEVER commit
+.gobbonet-secret
+*.secret
+*.key
+
+# Models and engine (way over GitHub's 100MB limit)
+models/
+llama.cpp/
+llama/
+*.gguf
+*.exe
+*.dll
+*.zip
+*.7z
+
+# Runtime junk
+logs/
+*.log
+cache/
+temp/
+tmp/
+conversations/

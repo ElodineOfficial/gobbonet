@@ -1,0 +1,282 @@
+/* @gobbonet-split css/09-dashboard.css
+   Moved verbatim from style.css lines 1549-1826.
+   landing page
+   Load order is a contract -- see REFACTOR-PLAN.md before reordering.
+   @end-split-header */
+/* ========================================================
+   LANDING PAGE DASHBOARD
+======================================================== */
+.landing-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px 20px 32px;
+  width: 100%;
+  max-width: 820px;
+  margin: 0 auto;
+}
+
+.landing-header {
+  text-align: center;
+  padding: 8px 0 4px;
+}
+
+.landing-title {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 7px;
+  color: var(--white);
+  text-shadow: var(--glow-text-c);
+  animation: crt-flicker 4s infinite;
+  text-transform: uppercase;
+}
+
+.landing-subtitle {
+  font-size: 12px;
+  color: var(--cyan-dim);
+  margin-top: 8px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+
+.landing-status-ok  { color: var(--green-neon); text-shadow: 0 0 6px rgba(0,255,115,0.5); }
+.landing-status-err { color: var(--red-neon);   text-shadow: var(--glow-red); }
+
+/* Section card */
+.landing-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(255,255,255,0.01);
+  overflow: hidden;
+}
+.landing-section-dim { opacity: 0.55; }
+
+.landing-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: rgba(0,243,255,0.04);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--cyan-bright);
+}
+
+.landing-tag {
+  font-size: 10px;
+  padding: 2px 10px;
+  border: 1px solid var(--magenta-dim);
+  border-radius: 10px;
+  color: var(--magenta);
+  letter-spacing: 1.5px;
+  background: rgba(217,0,255,0.07);
+}
+
+.landing-empty {
+  padding: 14px 16px;
+  color: var(--cyan-dim);
+  font-size: 13px;
+  font-style: italic;
+}
+
+.landing-hint {
+  text-align: center;
+  font-size: 12px;
+  color: var(--cyan-dim);
+  padding-bottom: 8px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+/* ── Scheduled tasks ── */
+/* ── Scheduled tasks ── */
+.landing-sched-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
+  /* Scroll-shadow: fade appears when more content is above/below.
+     'local' gradients travel with the content; 'scroll' shadows stay put.
+     Net effect: fade visible only when scroll is actually possible that direction. */
+  background:
+    linear-gradient(var(--surface) 20%, transparent)          center top    / 100% 36px,
+    linear-gradient(transparent,   var(--surface) 80%)        center bottom / 100% 36px,
+    radial-gradient(farthest-side at 50% 0,   rgba(0,0,0,.4), transparent) center top    / 100% 10px,
+    radial-gradient(farthest-side at 50% 100%,rgba(0,0,0,.4), transparent) center bottom / 100% 10px;
+  background-repeat: no-repeat;
+  background-attachment: local, local, scroll, scroll;
+}
+
+.landing-sched-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  cursor: pointer;
+  transition: background var(--transition);
+  font-size: 13px;
+  border-left: 3px solid transparent;
+}
+.landing-sched-item:last-child { border-bottom: none; }
+.landing-sched-item:hover { background: rgba(0,243,255,0.05); }
+.landing-sched-active { border-left-color: var(--green-neon); }
+.landing-sched-done  { border-left-color: var(--cyan-dim); opacity: 0.55; }
+
+.landing-sched-time {
+  font-weight: 700;
+  color: var(--cyan-bright);
+  min-width: 42px;
+  font-size: 14px;
+  text-shadow: var(--glow-text-c);
+}
+.landing-sched-type {
+  font-size: 11px;
+  color: var(--green-neon);
+  background: rgba(0,255,115,0.08);
+  padding: 2px 9px;
+  border-radius: 10px;
+  border: 1px solid var(--green-dim);
+  white-space: nowrap;
+}
+.landing-sched-thread {
+  color: var(--magenta);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 130px;
+}
+.landing-sched-prompt {
+  color: var(--cyan-dim);
+  font-size: 12px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Character cards on landing ── */
+.landing-char-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 280px;
+  overflow-y: auto;
+  background:
+    linear-gradient(var(--surface) 20%, transparent)          center top    / 100% 36px,
+    linear-gradient(transparent,   var(--surface) 80%)        center bottom / 100% 36px,
+    radial-gradient(farthest-side at 50% 0,   rgba(0,0,0,.4), transparent) center top    / 100% 10px,
+    radial-gradient(farthest-side at 50% 100%,rgba(0,0,0,.4), transparent) center bottom / 100% 10px;
+  background-repeat: no-repeat;
+  background-attachment: local, local, scroll, scroll;
+}
+
+.landing-char-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  cursor: pointer;
+  transition: background var(--transition);
+  border-left: 3px solid transparent;
+}
+.landing-char-card:last-child { border-bottom: none; }
+.landing-char-card:hover { background: rgba(217,0,255,0.05); }
+.landing-char-active {
+  border-left-color: var(--magenta);
+  background: rgba(217,0,255,0.04);
+}
+
+.landing-preset-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  cursor: default;
+  border-left: 3px solid transparent;
+}
+.landing-preset-card:last-child { border-bottom: none; }
+
+.landing-char-avatar {
+  width: calc(54px * var(--avatar-scale, 1));
+  height: calc(54px * var(--avatar-scale, 1));
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(22px * var(--avatar-scale, 1));
+  font-weight: 800;
+  flex-shrink: 0;
+  border: 2px solid var(--border);
+  background: var(--black);
+  overflow: hidden;
+  color: var(--magenta);
+  text-transform: uppercase;
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.8), 0 0 8px rgba(217,0,255,0.18);
+}
+.landing-char-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.landing-preset-icon {
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.landing-char-info { flex: 1; min-width: 0; }
+.landing-char-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--white);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.landing-char-desc {
+  font-size: 11px;
+  color: var(--cyan-dim);
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.landing-char-badge {
+  font-size: 10px;
+  padding: 2px 10px;
+  border: 1px solid var(--magenta-dim);
+  border-radius: 10px;
+  color: var(--magenta);
+  background: rgba(217,0,255,0.12);
+  letter-spacing: 1.5px;
+  flex-shrink: 0;
+  text-shadow: var(--glow-text-m);
+}
+.landing-preset-badge {
+  font-size: 10px;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--cyan-dim);
+  letter-spacing: 1.5px;
+  flex-shrink: 0;
+}
+.landing-preset-badge-install {
+  border-color: var(--green-dim);
+  color: var(--green-neon);
+  background: rgba(0, 255, 115, 0.08);
+}
+.landing-preset-installable {
+  cursor: pointer;
+}
+.landing-preset-installable:hover {
+  background: rgba(0, 255, 115, 0.05);
+}

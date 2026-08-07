@@ -1,0 +1,274 @@
+/* @gobbonet-split css/11-panels.css
+   Moved verbatim from style.css lines 2196-2464.
+   extensions modal, data management
+   Load order is a contract -- see REFACTOR-PLAN.md before reordering.
+   @end-split-header */
+/* ========================================================
+   EXTENSIONS MODAL
+   Styles for the custom CSS + JS override system.
+======================================================== */
+
+/* EXT button active dot */
+#ext-status-dot {
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+/* Warning box */
+.ext-warning-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid rgba(255, 165, 0, 0.3);
+  border-left: 3px solid #ff9500;
+  border-radius: var(--radius);
+  background: rgba(255, 149, 0, 0.06);
+  color: rgba(255, 200, 100, 0.9);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.ext-warning-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.ext-warning-box strong {
+  color: #ffb347;
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+
+/* Toggle */
+.ext-toggle-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.ext-toggle-wrap input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--green-neon);
+  cursor: pointer;
+}
+.ext-toggle-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--cyan-bright);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+/* Section dividers */
+.ext-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.ext-section-header {
+  padding: 8px 16px;
+  background: rgba(0, 243, 255, 0.04);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--cyan-bright);
+}
+.ext-section .form-group {
+  padding: 14px 16px 0;
+  margin-bottom: 0;
+}
+.ext-section .form-group:last-child {
+  padding-bottom: 14px;
+}
+
+/* Code-style textareas */
+.ext-code-area {
+  font-family: var(--font) !important;
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+  min-height: 120px;
+  resize: vertical;
+  background: var(--black) !important;
+  border-color: var(--border) !important;
+  color: var(--cyan-mid) !important;
+  tab-size: 2;
+}
+.ext-code-area:focus {
+  color: var(--cyan-bright) !important;
+  border-color: var(--cyan-dim) !important;
+}
+.ext-code-area::placeholder {
+  color: rgba(0, 243, 255, 0.2) !important;
+  font-style: italic;
+}
+
+/* Loaded extensions status panel */
+.ext-status-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.ext-status-header {
+  padding: 7px 14px;
+  background: rgba(255,255,255,0.02);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--cyan-dim);
+}
+.ext-status-list { padding: 4px 0; }
+.ext-status-empty {
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--cyan-dim);
+  font-style: italic;
+  letter-spacing: 0.5px;
+}
+.ext-status-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  font-size: 12px;
+}
+.ext-status-item:last-child { border-bottom: none; }
+.ext-status-type {
+  font-weight: 700;
+  color: var(--green-neon);
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 110px;
+}
+.ext-status-src {
+  color: var(--cyan-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+@media (max-width: 700px) {
+  .ext-warning-box { font-size: 12px; padding: 10px 12px; gap: 8px; }
+  .ext-section .form-group { padding: 10px 12px 0; }
+  .ext-section .form-group:last-child { padding-bottom: 10px; }
+  .ext-code-area { font-size: 13px !important; }
+  .ext-status-item { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .ext-status-type { min-width: unset; }
+}
+
+/* ========================================================
+   DATA MANAGEMENT — export / import / purge
+======================================================== */
+.data-mgmt-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--cyan-bright);
+  margin-bottom: 6px;
+}
+
+.data-import-status {
+  margin-top: 8px;
+  padding: 7px 12px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.data-import-ok {
+  background: rgba(0, 255, 115, 0.08);
+  border: 1px solid var(--green-dim);
+  color: var(--green-neon);
+}
+.data-import-err {
+  background: rgba(255, 0, 60, 0.08);
+  border: 1px solid var(--red-neon);
+  color: var(--red-neon);
+}
+
+/* DATA modal sections */
+.data-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+.data-section-header {
+  padding: 8px 16px;
+  background: rgba(0, 243, 255, 0.04);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--cyan-bright);
+}
+.data-section-body {
+  padding: 14px 16px;
+}
+
+@media (max-width: 700px) {
+  .data-section-body { padding: 10px 12px; }
+  .data-section-header { padding: 7px 12px; }
+}
+======================================================== */
+/* iOS safe area inset support */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .input-area {
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+  .sidebar-footer {
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+  .modal {
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+}
+
+/* Prevent text selection on interactive elements for touch */
+@media (pointer: coarse) {
+  .thread-item,
+  .card-item,
+  .btn,
+  .msg-action-btn,
+  .toggle-sidebar,
+  .sidebar-close-btn,
+  .search-toggle,
+  .bg-preset,
+  .avatar-file-btn {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  /* Slightly larger touch targets globally */
+  .btn { min-height: 44px; }
+  .msg-action-btn { min-height: 36px; padding: 6px 12px; }
+  .toggle-sidebar { padding: 6px 12px; }
+}
+
+/* ── Narrow-phone padding override that actually wins ─────────────
+   The @media (max-width: 400px) block above sets .msg-action-btn
+   padding to 6px 9px so a typical action row (Edit, Copy, Del,
+   [1/3], Reroll) stays on one line. But the @media (pointer: coarse)
+   block right above this re-asserts 6px 12px, and source order
+   makes pointer:coarse win on the very devices the narrow-phone
+   rule was written for — phones are both narrow AND touch. The
+   result was a row that wrapped, dropping the Reroll button to a
+   second line on its own and making the whole strip look broken.
+   Re-declaring the tightening here, with both conditions combined
+   and placed after pointer:coarse, wins the cascade without
+   needing !important. */
+@media (max-width: 400px) and (pointer: coarse) {
+  .msg-action-btn { padding: 6px 9px; }
+}

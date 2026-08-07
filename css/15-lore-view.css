@@ -1,0 +1,140 @@
+/* @gobbonet-split css/15-lore-view.css
+   Hand-written module -- NOT produced by refactor-split.py.
+   Lore inspector modal and the header lore chip.
+   Load order is a contract -- see REFACTOR-PLAN.md before reordering.
+   @end-split-header */
+/* ========================================================
+   LORE INSPECTOR
+======================================================== */
+
+/* Header chip. Sits between the thread title and the status dot, and is
+   hidden outright until a thread actually has a summary -- an always-on
+   badge reading "0" would just be noise on every short conversation. */
+.lore-chip {
+  flex: 0 0 auto;
+  font-size: 10px;
+  letter-spacing: 1px;
+  padding: 3px 8px;
+  border: 1px solid var(--magenta-dim, #6b0080);
+  border-radius: var(--radius, 4px);
+  color: var(--magenta, #d900ff);
+  background: rgba(217, 0, 255, 0.07);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.lore-chip:hover {
+  background: rgba(217, 0, 255, 0.16);
+  border-color: var(--magenta, #d900ff);
+}
+
+/* The "inspect" affordance on the in-chat compression banner. */
+.lore-compressed-banner { cursor: pointer; }
+.lore-inspect-link {
+  text-decoration: underline;
+  opacity: 0.75;
+  margin-left: 4px;
+}
+.lore-compressed-banner:hover .lore-inspect-link { opacity: 1; }
+
+/* ---- modal body ---- */
+.modal.lore-inspect { max-width: 720px; }
+
+.lore-section-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--magenta, #d900ff);
+  margin: 18px 0 6px;
+}
+.lore-section-label:first-child { margin-top: 0; }
+
+.lore-meta {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  margin-bottom: 8px;
+}
+
+.lore-empty {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  font-style: italic;
+  padding: 10px 0;
+}
+
+/* The summary is fielded output, so it is shown pre-wrapped rather than
+   reflowed -- SETTING / CHARACTERS / OPEN / EVENTS are meant to be read
+   as separate lines, and reflowing them hides exactly the structure you
+   opened this panel to check. */
+.lore-summary-text {
+  font-family: 'Atkinson Hyperlegible Mono', ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 12px 14px;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border, #1a1a40);
+  border-radius: var(--radius, 4px);
+  background: rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* ---- growth table ---- */
+.lore-history {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'Atkinson Hyperlegible Mono', ui-monospace, Consolas, monospace;
+  font-size: 11px;
+}
+.lore-history th {
+  text-align: left;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.4);
+  border-bottom: 1px solid var(--border, #1a1a40);
+  padding: 4px 8px 6px;
+}
+.lore-history td {
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.7);
+}
+.lore-history tr:last-child td { border-bottom: 0; }
+
+.lore-grow   { color: var(--orange, #ff9500); }
+.lore-shrink { color: var(--green-neon, #00ff73); }
+
+/* Width-proportional bar, so accretion is visible without reading numbers. */
+.lore-bar-cell { width: 34%; padding-right: 12px !important; }
+.lore-bar {
+  display: block;
+  height: 6px;
+  min-width: 2px;
+  border-radius: 3px;
+  background: linear-gradient(90deg,
+              var(--magenta-dim, #6b0080), var(--magenta, #d900ff));
+}
+
+.lore-warn {
+  margin-top: 12px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  border-left: 3px solid var(--orange, #ff9500);
+  border-radius: 0 var(--radius, 4px) var(--radius, 4px) 0;
+  background: rgba(255, 149, 0, 0.07);
+  color: rgba(255, 255, 255, 0.72);
+}
+
+@media (max-width: 700px) {
+  .lore-chip { display: none !important; }   /* header is tight on mobile */
+  .lore-history { font-size: 10px; }
+  .lore-history th:nth-child(2),
+  .lore-history td:nth-child(2) { display: none; }   /* drop the time column */
+  .lore-bar-cell { display: none; }
+  .lore-summary-text { font-size: 11px; max-height: 240px; }
+}

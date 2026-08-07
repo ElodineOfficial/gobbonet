@@ -1,0 +1,191 @@
+/* @gobbonet-split css/06-cards.css
+   Moved verbatim from style.css lines 1132-1318.
+   character cards
+   Load order is a contract -- see REFACTOR-PLAN.md before reordering.
+   @end-split-header */
+/* ========================================================
+   CHARACTER CARDS
+======================================================== */
+.card-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 24px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+.card-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--transition);
+  font-size: 14px;
+  background: rgba(0,0,0,0.3);
+}
+.card-item:hover { border-color: var(--cyan-dim); background: rgba(0, 243, 255, 0.05); transform: translateY(-2px); }
+.card-item.active { border-color: var(--magenta); background: rgba(217, 0, 255, 0.08); box-shadow: 0 0 15px rgba(217, 0, 255, 0.1); }
+.card-item .card-avatar {
+  width: calc(54px * var(--avatar-scale, 1));
+  height: calc(54px * var(--avatar-scale, 1));
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(22px * var(--avatar-scale, 1));
+  font-weight: bold;
+  background: var(--black);
+  border: 2px solid var(--cyan-dim);
+  flex-shrink: 0;
+  overflow: hidden;
+  color: var(--cyan-bright);
+  text-transform: uppercase;
+  box-shadow: inset 0 0 8px rgba(0,0,0,0.8);
+}
+.card-item.active .card-avatar { border-color: var(--magenta); color: var(--white); box-shadow: var(--glow-magenta); }
+.card-item .card-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.card-item .card-info { flex: 1; min-width: 0; }
+.card-item .card-name {
+  font-weight: 800;
+  color: var(--white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 1px;
+}
+.card-item.active .card-name::before { content: "► "; color: var(--magenta); }
+.card-item .card-desc {
+  font-size: 12px;
+  color: var(--cyan-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.card-item .card-actions {
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+.card-item:hover .card-actions { opacity: 1; }
+
+/* ─────────────────────────────────────────────────────────────
+   Cast modal — split sections for Characters (top) and Personas (bottom)
+   The shared .card-item styles apply to both grids; the .card-grid-persona
+   modifier swaps the active-state accent from magenta to green so the two
+   halves of the modal are visually distinguishable at a glance.
+───────────────────────────────────────────────────────────── */
+.cast-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 4px 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.cast-section-header-persona {
+  border-bottom-color: var(--green-dim);
+}
+.cast-section-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--magenta);
+  text-shadow: 0 0 2px rgba(217, 0, 255, 0.3);
+}
+.cast-section-header-persona .cast-section-title {
+  color: var(--green-neon);
+  text-shadow: 0 0 4px rgba(0, 255, 65, 0.3);
+}
+.cast-section-sub {
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--cyan-dim);
+  opacity: 0.7;
+}
+
+.cast-divider {
+  height: 0;
+  margin: 8px -8px 18px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.06);
+}
+
+/* Persona grid recolors the active-state to green so you can tell which
+   half of the modal you're in without reading labels. The non-active
+   hover stays cyan to match characters. */
+.card-grid-persona .card-item.active {
+  border-color: var(--green-neon);
+  background: rgba(0, 255, 65, 0.06);
+  box-shadow: 0 0 15px rgba(0, 255, 65, 0.1);
+}
+.card-grid-persona .card-item.active .card-avatar {
+  border-color: var(--green-neon);
+  color: var(--white);
+  box-shadow: 0 0 8px rgba(0, 255, 65, 0.4);
+}
+.card-grid-persona .card-item.active .card-name::before {
+  content: "\25BA  ";
+  color: var(--green-neon);
+}
+
+/* The + NEW PERSONA button picks up the green accent. Keeps the visual
+   association clean: anything green-tinted in this modal is about the
+   user side of the conversation. */
+.btn.btn-persona {
+  background: rgba(0, 255, 65, 0.06);
+  border-color: var(--green-dim);
+  color: var(--green-neon);
+}
+.btn.btn-persona:hover {
+  background: rgba(0, 255, 65, 0.12);
+  border-color: var(--green-neon);
+  color: var(--white);
+  text-shadow: 0 0 6px rgba(0, 255, 65, 0.5);
+}
+
+/* Persona editor header — clarifies which editor you're in when both
+   exist in the same modal. */
+.persona-editor-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 6px 10px;
+  margin-bottom: 16px;
+  border: 1px solid var(--green-dim);
+  border-radius: var(--radius);
+  background: rgba(0, 255, 65, 0.04);
+}
+.persona-editor-tag {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--green-neon);
+  text-shadow: 0 0 4px rgba(0, 255, 65, 0.3);
+}
+.persona-editor-tag-sub {
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--cyan-dim);
+  opacity: 0.7;
+}
+
+/* Background presets */
+.bg-presets { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.bg-preset {
+  width: 40px;
+  height: 40px;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.bg-preset:hover { border-color: var(--cyan-bright); transform: scale(1.1); }
+.bg-preset.selected { border-color: var(--magenta); box-shadow: var(--glow-magenta); transform: scale(1.1); }

@@ -1,0 +1,141 @@
+/* @gobbonet-split css/05-modals.css
+   Moved verbatim from style.css lines 995-1131.
+   modals, avatar picker
+   Load order is a contract -- see REFACTOR-PLAN.md before reordering.
+   @end-split-header */
+/* ========================================================
+   MODALS
+======================================================== */
+.modal-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.85);
+  backdrop-filter: blur(5px);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+.modal-backdrop.open { display: flex; animation: fadeIn 0.2s ease-out; }
+
+@keyframes fadeIn { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--cyan-dim);
+  border-radius: var(--radius);
+  width: 90%;
+  max-width: 650px;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 30px;
+  box-shadow: 0 0 30px rgba(0,0,0,0.8), 0 0 0 1px rgba(0, 243, 255, 0.1);
+  position: relative;
+}
+.modal::before {
+  content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--cyan-bright), transparent);
+}
+.modal h2 {
+  font-size: 18px;
+  color: var(--white);
+  margin-bottom: 24px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  text-shadow: var(--glow-text-c);
+}
+.modal h2::before { content: "CFG // "; color: var(--magenta); text-shadow: none; }
+
+.form-group { margin-bottom: 20px; }
+.form-group label {
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--magenta);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  text-shadow: 0 0 2px rgba(217, 0, 255, 0.3);
+}
+
+.form-group textarea,
+.form-group input[type="text"],
+.form-group input[type="password"],
+.form-group input[type="number"],
+.form-group input[type="time"],
+.form-group select {
+  width: 100%;
+  background: var(--black);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--cyan-bright);
+  font-family: var(--font);
+  font-size: 14px;
+  padding: 10px 14px;
+  transition: all var(--transition);
+}
+.form-group textarea:focus,
+.form-group input:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: var(--cyan-bright);
+  box-shadow: var(--glow-cyan);
+}
+.form-group textarea { min-height: 100px; resize: vertical; line-height: 1.6; }
+.form-group select { cursor: pointer; }
+.form-group select option { background: var(--elevated); color: var(--cyan-bright); }
+
+.form-hint { font-size: 12px; color: var(--cyan-dim); margin-top: 6px; font-style: italic; }
+.form-row { display: flex; gap: 16px; }
+.form-row .form-group { flex: 1; }
+.modal-actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 30px; border-top: 1px solid var(--border); padding-top: 20px; }
+
+/* ========================================================
+   AVATAR PICKER (image-based)
+======================================================== */
+.avatar-picker {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 8px;
+}
+.avatar-preview {
+  width: 56px;
+  height: 56px;
+  border: 1px solid var(--cyan-dim);
+  border-radius: var(--radius);
+  background: var(--black);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+  color: var(--cyan-dim);
+  font-size: 14px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.8);
+}
+.avatar-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.avatar-picker-controls { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+
+.avatar-file-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px dashed var(--magenta-dim);
+  border-radius: var(--radius);
+  background: rgba(217, 0, 255, 0.05);
+  color: var(--magenta);
+  font-family: var(--font);
+  font-size: 12px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: all var(--transition);
+  align-self: flex-start;
+}
+.avatar-file-btn:hover { border-color: var(--magenta); border-style: solid; color: var(--white); box-shadow: var(--glow-magenta); background: rgba(217, 0, 255, 0.2); }

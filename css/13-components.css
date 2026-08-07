@@ -1,0 +1,600 @@
+/* @gobbonet-split css/13-components.css
+   Moved verbatim from chat.html lines 9-604.
+   was the inline <style> block; loads last, as it did before
+   Load order is a contract -- see REFACTOR-PLAN.md before reordering.
+   @end-split-header */
+/* Chain of Thought collapsible block */
+.cot-block {
+  margin: 4px 0 8px 0;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px;
+  background: rgba(255,255,255,0.02);
+  overflow: hidden;
+  font-size: 13px;
+}
+.cot-block.cot-active {
+  border-color: rgba(0,255,65,0.2);
+  background: rgba(0,255,65,0.03);
+}
+.cot-summary {
+  padding: 6px 12px;
+  cursor: pointer;
+  color: rgba(255,255,255,0.5);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  user-select: none;
+  list-style: none;
+}
+.cot-summary::-webkit-details-marker { display: none; }
+.cot-summary::before {
+  content: '▸ ';
+  display: inline-block;
+  transition: transform 0.15s;
+}
+.cot-block[open] .cot-summary::before {
+  transform: rotate(90deg);
+}
+.cot-active .cot-summary {
+  color: rgba(0,255,65,0.7);
+}
+.cot-content {
+  padding: 8px 12px 12px;
+  max-height: 300px;
+  overflow-y: auto;
+  color: rgba(255,255,255,0.4);
+  font-size: 12px;
+  line-height: 1.5;
+  border-top: 1px solid rgba(255,255,255,0.05);
+}
+.cot-content p { margin: 4px 0; }
+
+/* Archived messages — folded into lore, still visible to the user but
+   no longer sent to the model. Dimmed so the live conversation visually
+   dominates; click to "wake up" if we ever want that gesture later. */
+.message.archived {
+  opacity: 0.45;
+  filter: saturate(0.7);
+}
+.message.archived .message-actions {
+  opacity: 0.6;
+}
+.lore-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 8px 12px 8px;
+  color: rgba(255,255,255,0.4);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  user-select: none;
+}
+.lore-divider::before,
+.lore-divider::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: linear-gradient(to right,
+    rgba(255,255,255,0) 0%,
+    rgba(255,255,255,0.18) 50%,
+    rgba(255,255,255,0) 100%);
+}
+.lore-divider-icon {
+  font-size: 14px;
+}
+
+/* Custom macro rows in MODS modal */
+.macro-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 12px;
+}
+.macro-row:last-child { border-bottom: none; }
+.macro-trigger {
+  font-weight: 700;
+  color: var(--green-neon, #00ff41);
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 120px;
+  letter-spacing: 0.3px;
+}
+.macro-preview {
+  color: rgba(0,243,255,0.45);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  font-style: italic;
+}
+.macro-actions {
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+/* Carousel Prompt toggle section */
+.carousel-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.carousel-toggle-label {
+  font-size: 12px;
+  color: var(--cyan-dim, rgba(0,243,255,0.5));
+  letter-spacing: 0.4px;
+}
+.carousel-toggle-label.active {
+  color: var(--cyan-mid, rgba(0,243,255,0.75));
+}
+.carousel-body {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid rgba(0,243,255,0.15);
+  border-radius: var(--radius);
+  background: rgba(0,243,255,0.03);
+  display: none;
+}
+.carousel-body.open {
+  display: block;
+}
+.carousel-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.5);
+}
+.carousel-mode-row label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  color: rgba(255,255,255,0.6);
+  font-size: 12px;
+  font-weight: normal;
+}
+.carousel-counter {
+  font-size: 11px;
+  color: rgba(0,243,255,0.4);
+  margin-top: 5px;
+  font-style: italic;
+}
+
+/* Range slider styling for sampler controls */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 2px;
+  outline: none;
+  margin: 8px 0 4px 0;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--green-neon, #00ff41);
+  cursor: pointer;
+  border: 2px solid rgba(0,0,0,0.5);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--green-neon, #00ff41);
+  cursor: pointer;
+  border: 2px solid rgba(0,0,0,0.5);
+}
+
+/* ── Header model selector ────────────────────────────── */
+.header-model-wrap {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+.header-model-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: rgba(0,255,65,0.5);
+  text-transform: uppercase;
+  user-select: none;
+  white-space: nowrap;
+}
+#header-model-select {
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(0,243,255,0.85);
+  background: transparent;
+  border: 1px solid rgba(0,243,255,0.18);
+  border-radius: 3px;
+  padding: 2px 4px;
+  cursor: pointer;
+  max-width: 180px;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='rgba(0,243,255,0.4)'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 5px center;
+  padding-right: 18px;
+}
+#header-model-select:hover {
+  border-color: rgba(0,243,255,0.45);
+  color: rgba(0,243,255,1);
+}
+#header-model-select option {
+  background: #0a0a0f;
+  color: rgba(0,243,255,0.85);
+}
+/* Restart-to-activate toast */
+#model-switch-toast {
+  position: fixed;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(10,10,15,0.96);
+  border: 1px solid rgba(255,170,0,0.4);
+  border-radius: 4px;
+  padding: 7px 16px;
+  font-size: 12px;
+  color: rgba(255,170,0,0.9);
+  letter-spacing: 0.3px;
+  z-index: 9000;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+#model-switch-toast.visible { opacity: 1; }
+/* Variant colours for hot-swap feedback */
+#model-switch-toast.t-info { border-color: rgba(0,243,255,0.5);  color: rgba(0,243,255,0.95); }
+#model-switch-toast.t-ok   { border-color: rgba(0,255,65,0.5);   color: rgba(0,255,65,0.95);  }
+#model-switch-toast.t-warn { border-color: rgba(255,170,0,0.5);  color: rgba(255,170,0,0.95); }
+#model-switch-toast.t-err  { border-color: rgba(255,80,80,0.6);  color: rgba(255,120,120,0.95); }
+/* While a swap is in flight, fade the dropdown and show a wait cursor */
+.header-model-wrap.swapping #header-model-select {
+  opacity: 0.55;
+  cursor: wait;
+}
+.header-model-wrap.swapping .header-model-label {
+  color: rgba(0,243,255,0.7);
+}
+
+/* Code blocks with copy header (regular ``` fenced blocks) */
+.code-block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: 12px 0;
+  overflow: hidden;
+}
+.code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: rgba(0, 243, 255, 0.05);
+  border-bottom: 1px solid var(--border);
+  /* Stay reachable while scrolling a tall snippet. The block scrolls
+     vertically (max-height below); the header pins to its top. */
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  backdrop-filter: blur(2px);
+}
+.code-lang {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--cyan-dim);
+}
+.code-block pre {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  border-left: 2px solid var(--magenta);
+}
+/* Cap very tall blocks so the sticky header has something to pin against,
+   and the code area itself scrolls instead of the whole page. */
+.code-block, .file-block { max-height: 70vh; overflow: auto; }
+.code-block pre, .file-block pre { max-height: none; }
+/* file-block header also sticks (it carries Copy + Save) */
+.file-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  backdrop-filter: blur(2px);
+}
+
+/* ===== File attachment: button, pending tray, drag-drop overlay ===== */
+#chat { position: relative; } /* anchor for the drop overlay */
+
+/* ===== Follow-to-bottom FAB =====================================
+   A floating "jump to latest" control that re-engages the streaming
+   auto-scroll after the user has touched/scrolled away during
+   generation. It lives as a direct child of #chat (the positioned
+   ancestor) rather than inside #messages, because renderMessages()
+   rewrites #messages.innerHTML wholesale on every state-transition
+   render — anything parked inside would be wiped mid-stream. Its
+   vertical position is anchored to the bottom edge of the .messages
+   viewport in JS (positionFollowButton), so it floats just above the
+   input cluster regardless of textarea height or which optional bars
+   (context-info, auto-continue, attach tray) happen to be showing. */
+#follow-bottom-btn {
+  position: absolute;
+  left: 50%;
+  /* bottom is set from JS; translateY animates the show/hide rise */
+  transform: translateX(-50%) translateY(8px);
+  z-index: 6;                       /* above .input-area (z-index:5) */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 15px 0 13px;
+  border-radius: 17px;
+  background: rgba(2, 2, 5, 0.86);  /* var(--black) @ ~86% */
+  border: 1px solid var(--cyan-dim);
+  color: var(--cyan-bright);
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55), var(--glow-cyan);
+  /* hidden by default — .visible (toggled by updateFollowButton) reveals it */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--transition), transform var(--transition),
+              border-color var(--transition), box-shadow var(--transition);
+}
+#follow-bottom-btn.visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+#follow-bottom-btn:hover {
+  border-color: var(--cyan-bright);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6),
+              0 0 14px rgba(0, 243, 255, 0.5);
+}
+#follow-bottom-btn .fb-arrow {
+  font-size: 14px;
+  line-height: 1;
+  transform: translateY(1px);
+}
+/* Touch devices: bigger thumb target, arrow-only (drop the label).
+   This is where the feature primarily lives — see the touchstart
+   handler in attachScrollPinTracking(). */
+@media (pointer: coarse) {
+  #follow-bottom-btn {
+    height: 42px;
+    width: 42px;
+    padding: 0;
+    border-radius: 50%;
+    gap: 0;
+  }
+  #follow-bottom-btn .fb-arrow { font-size: 19px; transform: translateY(1px); }
+  #follow-bottom-btn .fb-label { display: none; }
+}
+
+.attach-btn {
+  background: rgba(0, 243, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--cyan-dim);
+  font-size: 18px;
+  padding: 8px 13px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--transition);
+  min-height: 48px;
+  font-family: var(--font);
+  flex-shrink: 0;
+}
+.attach-btn:hover { border-color: var(--cyan-bright); color: var(--cyan-bright); box-shadow: var(--glow-cyan); }
+.attach-btn.has-files { border-color: var(--magenta); color: var(--magenta); box-shadow: var(--glow-magenta); }
+
+/* Pending attachments tray (above the input row) */
+.attach-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 20px 0;
+  align-items: center;
+}
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 280px;
+  padding: 5px 8px 5px 10px;
+  background: rgba(0, 243, 255, 0.06);
+  border: 1px solid var(--cyan-dim);
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: var(--cyan-mid);
+}
+.attach-chip.attach-chip-img { border-color: var(--magenta-dim); background: rgba(217, 0, 255, 0.06); }
+.attach-chip.attach-chip-skip { border-color: var(--red-neon); background: rgba(255, 0, 60, 0.05); opacity: 0.85; }
+.attach-chip-icon { flex-shrink: 0; font-size: 14px; }
+.attach-chip-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 700;
+}
+.attach-chip-meta { color: var(--cyan-dim); flex-shrink: 0; font-size: 11px; }
+.attach-chip-x {
+  flex-shrink: 0;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: var(--red-neon);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0 2px;
+  font-family: var(--font);
+}
+.attach-chip-x:hover { text-shadow: var(--glow-red); }
+
+/* Attachment chips shown on already-sent messages */
+.msg-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
+.msg-attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  font-size: 11px;
+  border-radius: var(--radius);
+  background: rgba(0,0,0,0.35);
+  border: 1px solid var(--border);
+  color: var(--cyan-dim);
+}
+.msg-attach-thumb { width: 28px; height: 28px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); }
+
+/* Drag & drop overlay */
+#drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 2, 5, 0.82);
+  backdrop-filter: blur(3px);
+  pointer-events: none;
+}
+#drop-overlay.active { display: flex; }
+.drop-overlay-inner {
+  text-align: center;
+  border: 2px dashed var(--cyan-bright);
+  border-radius: 12px;
+  padding: 40px 56px;
+  background: rgba(0, 243, 255, 0.04);
+  box-shadow: var(--glow-cyan);
+  animation: pulse-glow 1.6s infinite;
+}
+.drop-overlay-icon { font-size: 48px; line-height: 1; margin-bottom: 12px; }
+.drop-overlay-text {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--white);
+  text-shadow: var(--glow-text-c);
+}
+.drop-overlay-sub { font-size: 12px; color: var(--cyan-dim); margin-top: 8px; letter-spacing: 0.5px; }
+
+@media (max-width: 700px) {
+  .attach-btn { min-height: 44px; font-size: 16px; padding: 8px 11px; }
+  .attach-chip { max-width: 180px; }
+  .drop-overlay-inner { padding: 28px 32px; }
+}
+/* Copy button shared by code-block + file-block headers */
+.code-copy-btn { line-height: 1; }
+.code-copy-btn.code-copy-ok  { border-color: var(--green-neon); color: var(--green-neon); }
+.code-copy-btn.code-copy-err { border-color: var(--red-neon);   color: var(--red-neon); }
+/* Group the Copy + Save buttons in a file-block header */
+.file-header .code-btns { display: flex; gap: 8px; align-items: center; }
+
+/* ===== Edit-in-place sizing fix =====
+   A .message is a shrink-to-fit flex item (align-self + max-width, no explicit
+   width), so it normally sizes to its content. When editing, the content is a
+   width:100% textarea — a shrink-wrapped parent + percentage-width child
+   resolves to the textarea's tiny intrinsic (cols) width, collapsing the box.
+   Forcing the editing bubble to stretch full-width gives the textarea room. */
+.message.editing {
+  align-self: stretch;
+  max-width: 100%;
+  width: 100%;
+}
+.message.editing .edit-textarea {
+  width: 100%;
+  min-height: 140px;
+  box-sizing: border-box;
+}
+
+/* Multi-file extension entry cards (Stylesheets / Scripts lists) */
+.ext-entry {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--cyan-dim);
+  border-radius: var(--radius);
+  background: rgba(0,243,255,0.02);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.ext-entry.ext-entry-script { border-left-color: var(--magenta-dim); background: rgba(217,0,255,0.02); }
+.ext-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.ext-entry-name {
+  flex: 1;
+  min-width: 0;
+  background: var(--black);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--cyan-bright);
+  font-family: var(--font);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  padding: 8px 12px;
+  transition: all var(--transition);
+}
+.ext-entry-url {
+  width: 100%;
+  margin-bottom: 6px;
+  background: var(--black);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--cyan-bright);
+  font-family: var(--font);
+  font-size: 14px;
+  padding: 10px 14px;
+  transition: all var(--transition);
+}
+.ext-entry-name:focus,
+.ext-entry-url:focus {
+  outline: none;
+  border-color: var(--cyan-bright);
+  box-shadow: var(--glow-cyan);
+}
+.ext-entry-name::placeholder,
+.ext-entry-url::placeholder {
+  color: rgba(0,243,255,0.25);
+  font-style: italic;
+}
+.ext-entry .ext-code-area { width: 100%; }
+.ext-entry-empty {
+  font-size: 12px;
+  color: var(--cyan-dim);
+  font-style: italic;
+  padding: 4px 0 8px;
+}
+@media (max-width: 700px) {
+  .ext-entry-name, .ext-entry-url { font-size: 16px; } /* prevent iOS zoom on focus */
+}

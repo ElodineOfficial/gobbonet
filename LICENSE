@@ -1,0 +1,36 @@
+MIT License
+
+Copyright (c) 2026 Elodine
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+NOTE ON BUNDLED COMPONENTS
+
+This license covers GobboNet itself: the launcher, the PowerShell services
+and the web front end. It does not cover things GobboNet downloads for you
+at runtime, which carry their own terms:
+
+  llama.cpp  - MIT, from the ggml-org/llama.cpp releases
+  models     - each GGUF has its own licence set by whoever trained it.
+               Some are permissive, some restrict commercial use, some
+               require you to accept terms on Hugging Face first. Check
+               the model card before you rely on one for anything that
+               matters.

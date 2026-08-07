@@ -1,0 +1,185 @@
+/* @gobbonet-split css/03-threads.css
+   Moved verbatim from style.css lines 267-447.
+   thread list
+   Load order is a contract -- see REFACTOR-PLAN.md before reordering.
+   @end-split-header */
+/* ========================================================
+   THREADS
+======================================================== */
+.thread-list { flex: 1; overflow-y: auto; padding: 6px 4px 10px; }
+
+/* ── Thread items ── */
+.thread-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 9px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-left: 3px solid transparent;
+  transition: all var(--transition);
+  margin-bottom: 2px;
+  font-size: 13px;
+  background: rgba(255,255,255,0.01);
+  position: relative;
+}
+.thread-item:hover  { border-color: rgba(0,243,255,0.2); border-left-color: var(--cyan-dim);  background: rgba(0,243,255,0.05); }
+.thread-item.active { border-color: rgba(0,243,255,0.3); border-left-color: var(--cyan-bright); background: rgba(0,243,255,0.1); box-shadow: inset 0 0 10px rgba(0,243,255,0.05); }
+.thread-item.thread-pinned { border-left-color: var(--magenta); }
+
+/* Thread body (name + tags) */
+.thread-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 1px;
+}
+.thread-item .thread-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cyan-mid);
+  font-size: 13px;
+}
+.thread-item.active .thread-name { color: var(--white); font-weight: 700; text-shadow: 0 0 5px rgba(255,255,255,0.3); }
+
+/* Tag pills on thread items */
+.thread-tags-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.tag-pill {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--tc, var(--cyan-dim));
+  color: var(--tc, var(--cyan-mid));
+  background: color-mix(in srgb, var(--tc, var(--cyan-dim)) 12%, transparent);
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: default;
+  transition: opacity 0.15s;
+}
+
+/* Thread name row (name + pinned badge) */
+.thread-name-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.thread-name-row .thread-name { flex: 1; }
+.thread-pin-badge {
+  font-size: 10px;
+  color: var(--magenta);
+  flex-shrink: 0;
+  line-height: 1;
+  opacity: 0.75;
+}
+/* Hide badge when controls are visible on hover */
+.thread-item:hover .thread-pin-badge { display: none; }
+
+/* Thread control buttons — collapsed until hover, take zero layout space */
+.thread-ctrl {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  max-width: 0;
+  opacity: 0;
+  transition: max-width 0.2s ease, opacity 0.15s ease;
+}
+.thread-item:hover .thread-ctrl { max-width: 200px; opacity: 1; }
+.thread-ctrl-btn {
+  background: none;
+  border: none;
+  color: var(--cyan-dim);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 3px 5px;
+  border-radius: 4px;
+  font-family: var(--font);
+  transition: all 0.15s;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.thread-ctrl-btn:hover { color: var(--cyan-bright); background: rgba(0,243,255,0.1); }
+.thread-del-btn:hover  { color: var(--red-neon) !important; background: rgba(255,0,60,0.1) !important; }
+
+/* Mobile: controls always visible (touch has no hover) */
+@media (pointer: coarse) {
+  .thread-ctrl { max-width: 200px; opacity: 0.65; }
+}
+
+/* ── Drag and drop ────────────────────────────────────────────── */
+.thread-item { cursor: grab; }
+.thread-item:active { cursor: grabbing; }
+.thread-item.dragging { opacity: 0.3; pointer-events: none; }
+.thread-item.drag-over-before {
+  border-top: 2px solid var(--cyan-bright) !important;
+  margin-top: -1px;
+}
+.thread-item.drag-over-after {
+  border-bottom: 2px solid var(--cyan-bright) !important;
+  margin-bottom: -1px;
+}
+.folder-hdr.drag-folder-over {
+  background: rgba(0,243,255,0.08) !important;
+  border: 1px dashed var(--cyan-dim) !important;
+  border-radius: var(--radius);
+}
+.unfiled-label.drag-folder-over {
+  color: var(--cyan-bright);
+  background: rgba(0,243,255,0.06);
+  border-radius: var(--radius);
+}
+
+.sidebar-footer { padding: 12px 14px; border-top: 1px solid var(--border); background: var(--black); }
+.sidebar-footer-btns { display: flex; gap: 8px; }
+
+/* Server-state sync indicator — small status dot in the sidebar footer.
+   Click to manually restore from the server backup. Hidden on file://
+   (where sync is disabled) by virtue of never being created. */
+.sync-indicator {
+  margin-top: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  font-size: 11px;
+  font-family: var(--font);
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  user-select: none;
+  border: 1px solid transparent;
+  opacity: 0.7;
+  transition: opacity 120ms ease, border-color 120ms ease;
+  text-align: center;
+}
+.sync-indicator:hover { opacity: 1; border-color: var(--border); }
+.sync-indicator[data-status="ok"]       { color: var(--cyan-bright); }
+.sync-indicator[data-status="syncing"]  { color: var(--cyan-bright); opacity: 0.9; }
+.sync-indicator[data-status="idle"]     { color: rgba(255,255,255,0.4); }
+.sync-indicator[data-status="error"]    { color: #ff6b6b; opacity: 1; border-color: rgba(255,107,107,0.3); }
+.sync-indicator[data-status="disabled"] { display: none; }
+
+.rename-input {
+  background: var(--black);
+  border: 1px solid var(--cyan-bright);
+  border-radius: var(--radius);
+  color: var(--cyan-bright);
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 4px 8px;
+  width: 100%;
+  box-shadow: var(--glow-cyan);
+}
+
+.empty-threads {
+  padding: 20px 14px;
+  text-align: center;
+  color: var(--cyan-dim);
+  font-size: 13px;
+}

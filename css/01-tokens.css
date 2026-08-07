@@ -1,0 +1,136 @@
+/* @gobbonet-split css/01-tokens.css
+   Moved verbatim from style.css lines 1-132.
+   font-face, reset, custom properties, animations
+   Load order is a contract -- see REFACTOR-PLAN.md before reordering.
+   @end-split-header */
+/* ========================================================
+   GOBLIN_BIOS v3.0 — LOCAL LLM TERMINAL INTERFACE
+   Theme: Neon Cyberpunk / Deep Sci-Fi Terminal
+   Colors: Cyan, Magenta, Deep Indigo. Zero Orange.
+======================================================== */
+
+/* --------------------------------------------------------
+   LOCAL FONT - Atkinson Hyperlegible Mono
+   Self-hosted to keep this thing honestly offline.
+   No fonts.googleapis.com, no fonts.gstatic.com, no
+   telemetry leak on first load.
+
+   Drop the variable WOFF2 at: ./fonts/atkinson-hyperlegible.woff2
+   (See README / chat notes for the download source.)
+
+   font-display: swap means if the file is missing the
+   stack falls through to Cascadia Code / Consolas /
+   monospace and the UI still renders -- no FOIT.
+
+   Font: Atkinson Hyperlegible Mono by Braille Institute
+   License: SIL Open Font License 1.1 (free to self-host)
+-------------------------------------------------------- */
+@font-face {
+  font-family: 'Atkinson Hyperlegible Mono';
+  src: url('../fonts/atkinson-hyperlegible.woff2') format('woff2');
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  /* Deep Space Backgrounds */
+  --black:        #020205;
+  --surface:      #080814;
+  --elevated:     #0d0d26;
+  --border:       #1a1a40;
+
+  /* Primary Neon - Cyan */
+  --cyan-bright:  #00f3ff;
+  --cyan-mid:     #00b8ff;
+  --cyan-dim:     #005a88;
+
+  /* Secondary Neon - Electric Magenta (Replaces Amber/Orange) */
+  --magenta:      #d900ff;
+  --magenta-dim:  #6b0080;
+
+  /* Utility Colors */
+  --red-neon:     #ff003c;
+  --green-neon:   #00ff73;
+  --green-dim:    #006b33;
+  --white:        #e0f8ff;
+  
+  /* Redefining labels using our new palette */
+  --label:        var(--cyan-bright);
+
+  /* Message Bubbles */
+  --user-bg:      rgba(0, 90, 136, 0.15);
+  --user-border:  var(--cyan-bright);
+  --ai-bg:        rgba(107, 0, 128, 0.15);
+  --ai-border:    var(--magenta);
+
+  --font:         'Atkinson Hyperlegible Mono', 'Cascadia Code', 'Consolas', monospace;
+
+  --sidebar-w:    300px;
+  --radius:       6px;
+  --transition:   0.25s cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Avatar size multiplier — driven by the slider in CONFIG (1 = default).
+     Every avatar dimension is calc(base * var(--avatar-scale)), so this one
+     knob scales chat, card, and dashboard avatars at every breakpoint. */
+  --avatar-scale: 1;
+
+  /* Reusable Glows */
+  --glow-cyan:    0 0 10px rgba(0, 243, 255, 0.4), 0 0 20px rgba(0, 243, 255, 0.2);
+  --glow-magenta: 0 0 10px rgba(217, 0, 255, 0.4), 0 0 20px rgba(217, 0, 255, 0.2);
+  --glow-red:     0 0 10px rgba(255, 0, 60, 0.5);
+  --glow-text-c:  0 0 8px rgba(0, 243, 255, 0.6);
+  --glow-text-m:  0 0 8px rgba(217, 0, 255, 0.6);
+}
+
+/* --- ANIMATIONS --- */
+@keyframes crt-flicker {
+  0% { opacity: 0.95; text-shadow: var(--glow-text-c); }
+  5% { opacity: 0.75; text-shadow: none; }
+  10% { opacity: 1; text-shadow: var(--glow-text-c); }
+  15% { opacity: 0.85; }
+  20% { opacity: 1; text-shadow: var(--glow-text-c); }
+  100% { opacity: 1; text-shadow: var(--glow-text-c); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(0, 243, 255, 0.3); }
+  50% { box-shadow: var(--glow-cyan); }
+}
+
+html, body {
+  height: 100%;
+  background: var(--black);
+  color: var(--cyan-mid);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.6;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Global CRT Scanline Overlay */
+body::after {
+  content: "";
+  position: fixed;
+  top: 0; left: 0; width: 100vw; height: 100vh;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.15),
+    rgba(0, 0, 0, 0.15) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+::selection { background: var(--magenta); color: var(--white); }
+:focus-visible { outline: none; box-shadow: var(--glow-cyan); border-color: var(--cyan-bright); }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--black); }
+::-webkit-scrollbar-thumb { background: var(--cyan-dim); border-radius: var(--radius); }
+::-webkit-scrollbar-thumb:hover { background: var(--cyan-bright); box-shadow: var(--glow-cyan); }

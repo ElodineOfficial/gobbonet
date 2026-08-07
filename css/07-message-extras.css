@@ -1,0 +1,150 @@
+/* @gobbonet-split css/07-message-extras.css
+   Moved verbatim from style.css lines 1319-1464.
+   search results, file blocks, lore panel
+   Load order is a contract -- see REFACTOR-PLAN.md before reordering.
+   @end-split-header */
+/* ========================================================
+   SEARCH DATA ON MESSAGES
+======================================================== */
+.search-badge {
+  font-size: 14px;
+  margin-left: 4px;
+  cursor: default;
+}
+
+/* Search results card — always visible, prominent */
+.search-results-card {
+  margin-top: 10px;
+  border: 1px solid var(--cyan-dim);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: rgba(0, 243, 255, 0.03);
+}
+.search-results-header {
+  padding: 8px 14px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--cyan-bright);
+  background: rgba(0, 243, 255, 0.08);
+  border-bottom: 1px solid var(--cyan-dim);
+  text-shadow: var(--glow-text-c);
+}
+.search-results-body {
+  padding: 8px 12px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.search-entry {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.search-entry:last-child { border-bottom: none; }
+.search-entry-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--magenta);
+  text-decoration: none;
+  margin-bottom: 3px;
+  transition: color 0.2s;
+}
+a.search-entry-title:hover {
+  color: var(--white);
+  text-shadow: var(--glow-text-m);
+}
+.search-entry-content {
+  font-size: 12px;
+  color: var(--cyan-mid);
+  line-height: 1.5;
+  margin-bottom: 2px;
+}
+.search-entry-url {
+  font-size: 10px;
+  color: var(--cyan-dim);
+  letter-spacing: 0.5px;
+  word-break: break-all;
+}
+
+/* ========================================================
+   FILE BLOCKS — downloadable code output
+======================================================== */
+.file-block {
+  border: 1px solid var(--magenta-dim);
+  border-radius: var(--radius);
+  margin: 12px 0;
+  overflow: hidden;
+}
+.file-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: rgba(217, 0, 255, 0.08);
+  border-bottom: 1px solid var(--magenta-dim);
+}
+.file-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--magenta);
+  letter-spacing: 1px;
+}
+.file-block pre {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+}
+
+/* ========================================================
+   LORE PANEL
+======================================================== */
+.lore-panel {
+  border-bottom: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+  padding: 14px 20px;
+}
+.lore-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.lore-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--magenta);
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  text-shadow: var(--glow-text-m);
+}
+.lore-title::before { content: "CFG // "; color: var(--magenta-dim); text-shadow: none; }
+.lore-token-count {
+  font-size: 11px;
+  color: var(--cyan-dim);
+  letter-spacing: 1px;
+}
+.lore-editor {
+  width: 100%;
+  background: var(--black);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--cyan-bright);
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 10px;
+  resize: vertical;
+  min-height: 80px;
+  max-height: 200px;
+  line-height: 1.5;
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.8);
+}
+.lore-editor:focus { outline: none; border-color: var(--cyan-bright); box-shadow: var(--glow-cyan); }
+.lore-editor::placeholder { color: rgba(0, 243, 255, 0.25); }
+.lore-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  justify-content: flex-end;
+}

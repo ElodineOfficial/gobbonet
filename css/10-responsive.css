@@ -1,0 +1,373 @@
+/* @gobbonet-split css/10-responsive.css
+   Moved verbatim from style.css lines 1827-2195.
+   700px and 400px breakpoints, untouched
+   Load order is a contract -- see REFACTOR-PLAN.md before reordering.
+   @end-split-header */
+/* ========================================================
+   RESPONSIVE — MOBILE (≤ 700px)
+======================================================== */
+@media (max-width: 700px) {
+
+  /* --- Sidebar: overlay mode --- */
+  :root { --sidebar-w: 82vw; }
+
+  #sidebar {
+    position: fixed;
+    top: 0; left: 0;
+    height: 100vh;
+    height: 100dvh;
+    width: var(--sidebar-w);
+    min-width: unset;
+    z-index: 50;
+    transition: transform var(--transition), opacity var(--transition);
+    transform: translateX(0);
+    opacity: 1;
+    margin-left: 0;
+  }
+  #sidebar.collapsed {
+    transform: translateX(-105%);
+    opacity: 0;
+    margin-left: 0;
+    pointer-events: none;
+  }
+
+  /* Show close button on mobile */
+  .sidebar-close-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Activate the overlay on mobile */
+  #sidebar-overlay {
+    display: block;
+  }
+  #sidebar-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .sidebar-header { padding: 16px 12px 14px; }
+  .sidebar-header h1 { font-size: 15px; margin-bottom: 0; letter-spacing: 2px; }
+  .sidebar-header-row { margin-bottom: 10px; }
+
+  .thread-list { padding: 8px 6px; }
+  .thread-item { padding: 14px 12px; font-size: 14px; }
+  /* Touch: always show delete/edit buttons */
+  .thread-item .thread-delete,
+  .thread-item .thread-edit { opacity: 0.7; }
+
+  .sidebar-footer { padding: 10px 12px; }
+  .sidebar-footer-btns { flex-wrap: wrap; gap: 6px; }
+  .sidebar-footer-btns .btn { font-size: 12px; padding: 10px 10px; }
+  .sidebar-footer-btns .btn-block { width: auto; flex: 1; min-width: 0; }
+
+  /* --- Chat area --- */
+  #chat { width: 100%; }
+
+  .chat-header {
+    padding: 10px 12px;
+    gap: 8px;
+    flex-wrap: nowrap;
+    min-height: 48px;
+  }
+  .chat-header .thread-title {
+    font-size: 13px;
+    min-width: 0;
+  }
+  .chat-header .thread-title::before {
+    content: "~# ";   /* shorter prefix on mobile */
+  }
+  .status-label { font-size: 10px; letter-spacing: 0.5px; }
+  .status-dot { width: 8px; height: 8px; }
+  .privacy-badge { font-size: 12px; }
+
+  /* --- Messages --- */
+  .messages {
+    padding: 12px 10px;
+    gap: 14px;
+  }
+  .message {
+    max-width: 96%;
+    padding: 12px 14px;
+    font-size: 14px;
+    line-height: 1.65;
+  }
+  .message-system-inject {
+    max-width: 90%;
+    font-size: 11px;
+    padding: 6px 12px;
+    letter-spacing: 1px;
+    border-radius: 14px;
+  }
+
+  .msg-header { gap: 8px; padding-bottom: 6px; margin-bottom: 6px; }
+  .msg-avatar { width: calc(46px * var(--avatar-scale, 1)); height: calc(46px * var(--avatar-scale, 1)); font-size: calc(18px * var(--avatar-scale, 1)); }
+  .message-role { font-size: 11px; letter-spacing: 1.5px; }
+
+  .message-content pre {
+    padding: 12px;
+    font-size: 12px;
+    margin: 8px -4px;
+    border-radius: 4px;
+  }
+  .message-content pre code { font-size: 12px; }
+  .message-content code { font-size: 13px; padding: 1px 5px; }
+
+  /* Touch: always show message action buttons */
+  .message .message-actions {
+    opacity: 1;
+    position: static;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+    justify-content: flex-start;
+    flex-wrap: wrap;        /* let the row break cleanly when crowded */
+    row-gap: 6px;
+  }
+  .msg-action-btn {
+    padding: 6px 12px;
+    font-size: 11px;
+    min-height: 32px;
+  }
+
+  /* ── Reroll variant nav: scale up to match touch-sized action buttons.
+     The segmented look (wrapper border, inner dividers, stretched
+     children) lives in the base .variant-nav rules so desktop and
+     mobile share one design. Here we only override dimensions for
+     touch: min-height bumps to 36px so the wrapper aligns with
+     .msg-action-btn — which the pointer:coarse block (further down)
+     pushes to min-height: 36px on every touch device. The previous
+     32px left the variant-nav reading short next to its row-mates
+     on every phone. Arrow glyphs also grow a bit for thumb use. */
+  .variant-nav {
+    min-height: 36px;
+  }
+  .variant-nav-btn {
+    min-width: 36px;
+    padding: 0 10px;
+    font-size: 13px;         /* arrow glyphs need to be readable at thumb distance */
+  }
+  .variant-nav-label {
+    font-size: 12px;
+    padding: 0 8px;
+    min-width: 36px;
+  }
+
+  /* --- Welcome screen --- */
+  .welcome { padding: 24px 16px; gap: 12px; }
+  .welcome h2 { font-size: 18px; letter-spacing: 3px; }
+  .welcome p { font-size: 13px; padding: 8px 14px; line-height: 1.7; }
+
+  /* --- Landing page dashboard --- */
+  .landing-page { padding: 14px 10px 24px; gap: 14px; }
+  .landing-title { font-size: 18px; letter-spacing: 4px; }
+  .landing-subtitle { font-size: 10px; letter-spacing: 1px; }
+  .landing-section-header { padding: 8px 12px; font-size: 10px; letter-spacing: 1.5px; }
+  .landing-sched-list { max-height: none; overflow-y: visible; background: none; }
+  .landing-char-list  { max-height: none; overflow-y: visible; background: none; }
+  .landing-sched-item { padding: 8px 12px; gap: 8px; }
+  .landing-sched-time { font-size: 13px; min-width: 38px; }
+  .landing-sched-prompt { display: none; } /* hide on narrow screens */
+  .landing-char-card, .landing-preset-card { padding: 10px 12px; gap: 10px; }
+  .landing-char-name { font-size: 12px; }
+  .landing-char-desc { font-size: 10px; }
+  .landing-char-avatar { width: calc(50px * var(--avatar-scale, 1)); height: calc(50px * var(--avatar-scale, 1)); font-size: calc(20px * var(--avatar-scale, 1)); }
+  .landing-preset-icon { width: 32px; height: 32px; font-size: 18px; }
+  .landing-hint { font-size: 11px; }
+
+  /* --- Input area --- */
+  .input-area {
+    padding: 10px;
+    gap: 8px;
+  }
+  #msg-input {
+    font-size: 16px;        /* prevents iOS zoom */
+    padding: 10px 12px;
+    min-height: 44px;
+  }
+  #send-btn { padding: 10px 16px; min-height: 44px; font-size: 13px; }
+  #stop-btn { padding: 10px 14px; min-height: 44px; }
+  .search-toggle { padding: 8px 10px; min-height: 44px; font-size: 14px; }
+
+  .context-info { padding: 4px 12px; font-size: 10px; }
+
+  /* ── Auto-continue bar: text wraps, layout stays single-row ──────
+     Desktop ellipsizes the text on overflow, which would clip "next
+     in 14s" — exactly the countdown info that matters most. On
+     phones we let the text wrap to multiple lines instead, with
+     align-items: center to keep CANCEL vertically anchored when
+     the text takes two lines. Bar grows taller, but nothing
+     important gets hidden. */
+  .auto-continue-bar {
+    padding: 8px 12px;
+    font-size: 11px;
+    gap: 10px;
+    letter-spacing: 0.5px;
+    align-items: center;
+  }
+  .auto-continue-text {
+    white-space: normal;     /* override desktop nowrap */
+    overflow: visible;
+    line-height: 1.4;
+  }
+  .auto-continue-cancel {
+    padding: 8px 16px;
+    font-size: 10px;
+    min-height: 32px;
+    min-width: 72px;
+    flex-shrink: 0;          /* never shrink below its tap target */
+  }
+
+  /* --- Modals: near-fullscreen --- */
+  .modal-backdrop { align-items: flex-end; }
+  .modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 92vh;
+    max-height: 92dvh;
+    padding: 20px 16px;
+    border-radius: 14px 14px 0 0;
+    border-bottom: none;
+    animation: slideUp 0.25s ease-out;
+  }
+  @keyframes slideUp {
+    from { transform: translateY(30%); opacity: 0; }
+    to   { transform: translateY(0);   opacity: 1; }
+  }
+  .modal h2 { font-size: 16px; margin-bottom: 18px; letter-spacing: 3px; }
+
+  .form-group { margin-bottom: 16px; }
+  .form-group label { font-size: 11px; letter-spacing: 1.5px; margin-bottom: 6px; }
+  .form-group textarea,
+  .form-group input[type="text"],
+  .form-group input[type="password"],
+  .form-group input[type="number"],
+  .form-group input[type="time"],
+  .form-group select {
+    font-size: 16px;        /* prevents iOS zoom */
+    padding: 10px 12px;
+  }
+  .form-hint { font-size: 11px; }
+
+  /* Stack form-rows vertically on mobile */
+  .form-row { flex-direction: column; gap: 0; }
+  .form-row .form-group { flex: unset; }
+
+  .modal-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 20px;
+    padding-top: 16px;
+  }
+  .modal-actions .btn { flex: 1 1 auto; min-height: 44px; }
+
+  /* --- Avatar picker --- */
+  .avatar-picker {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .avatar-picker-controls { width: 100%; }
+  .avatar-file-btn { width: 100%; justify-content: center; padding: 10px 14px; }
+
+  /* --- Color pickers --- */
+  .color-row {
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .color-swatch-wrap { width: 100%; }
+  input[type="color"].color-swatch { width: 40px; height: 40px; }
+  .color-hex { flex: 1; }
+  .color-preview-text {
+    font-size: 11px;
+    display: block;
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  /* --- Character cards --- */
+  .card-grid { max-height: 200px; padding-right: 4px; }
+  .card-item { padding: 12px; gap: 10px; font-size: 13px; }
+  .card-item .card-avatar { width: calc(50px * var(--avatar-scale, 1)); height: calc(50px * var(--avatar-scale, 1)); font-size: calc(20px * var(--avatar-scale, 1)); }
+  /* Touch: always show card actions */
+  .card-item .card-actions { opacity: 1; }
+
+  /* --- Lore panel --- */
+  .lore-panel { padding: 10px 12px; }
+  .lore-title { font-size: 11px; letter-spacing: 2px; }
+  .lore-editor {
+    font-size: 14px;
+    padding: 8px;
+    min-height: 60px;
+  }
+  .lore-actions { margin-top: 6px; }
+
+  /* --- Search results --- */
+  .search-results-header { padding: 6px 10px; font-size: 10px; letter-spacing: 1.5px; }
+  .search-results-body { padding: 6px 10px; max-height: 220px; }
+  .search-entry-title { font-size: 12px; }
+  .search-entry-content { font-size: 11px; }
+  .search-entry-url { font-size: 9px; }
+
+  /* --- File blocks --- */
+  .file-header { padding: 6px 10px; }
+  .file-name { font-size: 12px; }
+  .file-block pre { padding: 10px; }
+
+  /* --- Chain of Thought --- */
+  .cot-block { font-size: 12px; }
+  .cot-summary { padding: 8px 10px; font-size: 11px; }
+  .cot-content { padding: 6px 10px 10px; font-size: 11px; max-height: 200px; }
+
+  /* --- Range sliders: bigger touch targets --- */
+  input[type="range"] { height: 6px; margin: 10px 0 6px 0; }
+  input[type="range"]::-webkit-slider-thumb { width: 22px; height: 22px; }
+  input[type="range"]::-moz-range-thumb { width: 22px; height: 22px; }
+
+  /* --- Background presets --- */
+  .bg-presets { gap: 10px; }
+  .bg-preset { width: 44px; height: 44px; }
+
+  /* --- Sampler params panel (inside card editor) --- */
+  .form-group[style*="padding:12px"] {
+    padding: 10px !important;
+  }
+}
+
+/* ========================================================
+   RESPONSIVE — SMALL MOBILE (≤ 400px)
+======================================================== */
+@media (max-width: 400px) {
+  :root { --sidebar-w: 90vw; }
+
+  .chat-header .thread-title::before { content: "# "; }
+  .message { padding: 10px 12px; font-size: 13px; }
+  .message-role { font-size: 10px; }
+  .msg-avatar { width: calc(42px * var(--avatar-scale, 1)); height: calc(42px * var(--avatar-scale, 1)); font-size: calc(17px * var(--avatar-scale, 1)); }
+
+  .welcome h2 { font-size: 15px; letter-spacing: 2px; }
+  .welcome p { font-size: 12px; }
+
+  #msg-input { padding: 8px 10px; }
+  #send-btn { padding: 8px 12px; font-size: 12px; }
+
+  .modal { padding: 16px 12px; }
+  .modal h2 { font-size: 14px; letter-spacing: 2px; }
+
+  .sidebar-header h1 { font-size: 14px; }
+  .thread-item { font-size: 13px; padding: 12px 10px; }
+
+  /* Action row gets tight on iPhone-SE-width screens — trim button
+     padding so a typical row (Edit, Copy, Del, [1/3], Reroll) still
+     fits without wrapping. The variant-nav wrapper keeps its full
+     height because the arrows need to stay tappable. */
+  .msg-action-btn { padding: 6px 9px; font-size: 10px; }
+  .variant-nav-btn { min-width: 32px; padding: 0 7px; font-size: 12px; }
+  .variant-nav-label { min-width: 30px; padding: 0 5px; font-size: 11px; }
+
+  /* Auto-continue bar: take a smaller font on the very narrow set */
+  .auto-continue-bar { padding: 7px 10px; font-size: 10px; gap: 8px; }
+  .auto-continue-cancel { padding: 7px 12px; min-width: 64px; }
+}

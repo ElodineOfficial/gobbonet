@@ -1,0 +1,9 @@
+{
+  "id": "gemma4",
+  "name": "google_gemma-4-26B-A4B-it-Q4_K_S",
+  "family": "gemma",
+  "ggufFile": "google_gemma-4-26B-A4B-it-Q4_K_S.gguf",
+  "maxCtx": 262144,
+  "defaultCtx": 16384,
+  "thinkingFormat": "gemma"
+}

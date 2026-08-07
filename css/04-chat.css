@@ -1,0 +1,551 @@
+/* @gobbonet-split css/04-chat.css
+   Moved verbatim from style.css lines 448-994.
+   chat header, messages, welcome, input
+   Load order is a contract -- see REFACTOR-PLAN.md before reordering.
+   @end-split-header */
+/* ========================================================
+   CHAT HEADER
+======================================================== */
+#chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: radial-gradient(circle at center, var(--surface) 0%, var(--black) 100%);
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  font-size: 13px;
+}
+
+.toggle-sidebar {
+  background: rgba(0, 243, 255, 0.05);
+  border: 1px solid var(--cyan-dim);
+  color: var(--cyan-bright);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  font-family: var(--font);
+  transition: all var(--transition);
+}
+.toggle-sidebar:hover { background: var(--cyan-bright); color: var(--black); box-shadow: var(--glow-cyan); }
+
+.home-btn {
+  background: rgba(0, 243, 255, 0.05);
+  border: 1px solid var(--cyan-dim);
+  color: var(--cyan-dim);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  font-family: var(--font);
+  transition: all var(--transition);
+  line-height: 1;
+}
+.home-btn:hover { background: var(--cyan-bright); color: var(--black); box-shadow: var(--glow-cyan); }
+/* Hide home btn when already on landing page */
+.home-btn.hidden { display: none; }
+
+.chat-header .thread-title {
+  flex: 1;
+  font-weight: 700;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--white);
+  text-shadow: 0 0 5px rgba(255,255,255,0.4);
+}
+.chat-header .thread-title::before {
+  content: "sysadmin@gobbonet:~# ";
+  color: var(--cyan-dim);
+  font-weight: 400;
+  text-shadow: none;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--red-neon);
+  box-shadow: var(--glow-red);
+  transition: background 0.5s, box-shadow 0.5s;
+}
+.status-dot.connected { background: var(--green-neon); box-shadow: 0 0 10px rgba(0, 255, 115, 0.6); }
+
+/* Changed amber to magenta for status */
+.status-label {
+  font-size: 12px;
+  color: var(--magenta);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  text-shadow: var(--glow-text-m);
+}
+
+.privacy-badge {
+  font-size: 14px;
+  margin-left: 4px;
+  cursor: help;
+  filter: drop-shadow(0 0 4px rgba(0, 255, 115, 0.6));
+  animation: privacy-pulse 3s ease-in-out infinite;
+}
+
+@keyframes privacy-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ========================================================
+   MESSAGES
+======================================================== */
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  /* No global `scroll-behavior: smooth` here on purpose. The streaming
+     auto-scroll re-pins to the bottom every ~80ms; with smooth scrolling
+     each re-pin became an animated glide that never caught the still-growing
+     content, so the view trailed a few messages behind the newest tokens
+     (and the in-flight animation fought a tap trying to stop following).
+     Smoothness is now opt-in per call — only the follow-to-bottom button,
+     and only once a reply has finished streaming. See scrollToBottom(). */
+}
+
+.message {
+  max-width: 85%;
+  padding: 16px 20px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  border-left: 4px solid;
+  line-height: 1.7;
+  font-size: 15px;
+  position: relative;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+  backdrop-filter: blur(2px);
+}
+
+.message-user { 
+  align-self: flex-end; 
+  background: var(--user-bg); 
+  border-color: rgba(0, 243, 255, 0.1);
+  border-left-color: var(--user-border); 
+}
+.message-assistant { 
+  align-self: flex-start; 
+  background: var(--ai-bg); 
+  border-color: rgba(217, 0, 255, 0.1);
+  border-left-color: var(--ai-border); 
+  color: var(--white); 
+}
+
+/* Changed System Inject to Magenta */
+.message-system-inject {
+  align-self: center;
+  background: rgba(217, 0, 255, 0.1);
+  border: 1px solid var(--magenta-dim);
+  border-left-color: var(--magenta);
+  font-size: 12px;
+  max-width: 60%;
+  color: var(--magenta);
+  text-align: center;
+  padding: 8px 16px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  border-radius: 20px;
+  text-shadow: 0 0 5px rgba(217, 0, 255, 0.3);
+}
+
+.msg-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 8px; }
+
+/* Response timer badge — how long this reply took to generate. Sits at the
+   right edge of the message header; ticks live (green) while streaming,
+   settles to a dim permanent readout once the turn completes. */
+.gen-time {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: rgba(224, 248, 255, 0.35);
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+.gen-time-live {
+  color: var(--green-neon);
+  text-shadow: 0 0 6px rgba(0, 255, 115, 0.35);
+}
+/* Smart-limit marker — this reply was trimmed at the token cap. Spacing
+   comes from the header's flex gap; it rides just right of the timer. */
+.gen-cap-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--magenta);
+  opacity: 0.75;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: default;
+}
+.msg-avatar {
+  width: calc(50px * var(--avatar-scale, 1));
+  height: calc(50px * var(--avatar-scale, 1));
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(20px * var(--avatar-scale, 1));
+  font-weight: 800;
+  flex-shrink: 0;
+  border: 2px solid var(--border);
+  background: var(--black);
+  overflow: hidden;
+  color: var(--cyan-mid);
+  text-transform: uppercase;
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.8);
+}
+.message-user .msg-avatar { border-color: var(--cyan-dim); color: var(--cyan-bright); box-shadow: inset 0 0 12px rgba(0,0,0,0.85), 0 0 9px rgba(0,243,255,0.22); }
+.message-assistant .msg-avatar { border-color: var(--magenta-dim); color: var(--magenta); box-shadow: inset 0 0 12px rgba(0,0,0,0.85), 0 0 9px rgba(217,0,255,0.22); }
+.msg-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; filter: contrast(1.2); }
+
+.message-role {
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-bottom: 0;
+}
+.message-user .message-role { color: var(--cyan-bright); text-shadow: var(--glow-text-c); }
+.message-user .message-role::before { content: "USR // "; color: var(--cyan-dim); text-shadow: none; }
+.message-assistant .message-role { color: var(--magenta); text-shadow: var(--glow-text-m); }
+.message-assistant .message-role::before { content: "SYS // "; color: var(--magenta-dim); text-shadow: none; }
+
+.message-content p { margin-bottom: 10px; }
+.message-content p:last-child { margin-bottom: 0; }
+.message-content ul, .message-content ol { margin: 8px 0 8px 24px; }
+.message-content li { margin-bottom: 4px; }
+.message-content strong { color: var(--cyan-bright); font-weight: 700; text-shadow: 0 0 2px rgba(0,243,255,0.3); }
+.message-assistant .message-content strong { color: var(--white); text-shadow: 0 0 2px rgba(255,255,255,0.3); }
+.message-content em { font-style: italic; color: rgba(255,255,255,0.7); }
+.message-content .dialog-text { font-weight: 700; }
+.message-content a { color: var(--magenta); text-decoration: none; border-bottom: 1px dotted var(--magenta); transition: all 0.2s; }
+.message-content a:hover { color: var(--white); border-bottom-style: solid; text-shadow: var(--glow-text-m); }
+
+.message-content code {
+  font-family: var(--font);
+  background: rgba(0, 0, 0, 0.5);
+  color: var(--cyan-bright);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 14px;
+  border: 1px solid rgba(0, 243, 255, 0.2);
+}
+.message-content pre {
+  background: var(--black);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--magenta);
+  border-radius: var(--radius);
+  padding: 16px;
+  overflow-x: auto;
+  margin: 12px 0;
+  box-shadow: inset 0 0 15px rgba(0,0,0,0.8);
+}
+.message-content pre code { background: none; padding: 0; font-size: 14px; color: var(--cyan-mid); border: none; }
+
+.message-actions {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+.message:hover .message-actions { opacity: 1; }
+
+.msg-action-btn {
+  background: rgba(0,0,0,0.6);
+  border: 1px solid var(--cyan-dim);
+  color: var(--cyan-mid);
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-family: var(--font);
+  transition: all var(--transition);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  backdrop-filter: blur(4px);
+}
+.msg-action-btn:hover { background: var(--cyan-bright); color: var(--black); box-shadow: var(--glow-cyan); }
+.msg-action-btn.btn-reroll { border-color: var(--magenta); color: var(--magenta); }
+.msg-action-btn.btn-reroll:hover { background: var(--magenta); color: var(--white); box-shadow: var(--glow-magenta); }
+.msg-action-btn.btn-delete { border-color: var(--red-neon); color: var(--red-neon); }
+.msg-action-btn.btn-delete:hover { background: var(--red-neon); color: var(--white); box-shadow: var(--glow-red); }
+
+/* ── Reroll-variant navigator (inline, next to message actions) ──
+   Shown on any message with >1 stored variant — user messages (edit
+   history) AND assistant messages (reroll history). Both render via
+   the same .variant-nav markup so they look identical; only the
+   tooltip copy differs. Visually distinct from .branch-nav-btn
+   (magenta, in the thread header) — variants are cyan so they read
+   as a different axis of navigation: branches jump between threads,
+   variants flip between regenerations or edits within one message.
+
+   Designed as a single segmented control rather than three loose
+   buttons: the wrapper carries the border + background, inner
+   buttons are transparent, the centre label provides dividers via
+   border-left/right. align-items: stretch lets the wrapper inherit
+   the natural height of its row-mates (.msg-action-btn) so it
+   never reads as shorter or taller than the buttons beside it. */
+.variant-nav {
+  display: inline-flex;
+  align-items: stretch;          /* children fill the wrapper top-to-bottom; dividers reach the edges */
+  gap: 0;                         /* dividers come from label borders, not from flex gap */
+  margin: 0 2px;
+  vertical-align: middle;
+  border: 1px solid var(--cyan-dim, rgba(0,240,255,0.4));
+  border-radius: var(--radius);
+  background: rgba(0, 240, 255, 0.05);
+  overflow: hidden;               /* clip inner button corners to the wrapper's rounded outline */
+}
+.variant-nav-btn {
+  background: transparent;        /* wrapper supplies the background */
+  border: none;                   /* wrapper supplies the border; label supplies dividers */
+  border-radius: 0;
+  color: var(--cyan-bright);
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0 9px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+}
+.variant-nav-btn:hover:not(:disabled) {
+  background: var(--cyan-bright);
+  color: var(--black);
+  box-shadow: var(--glow-cyan);
+}
+.variant-nav-btn:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+.variant-nav-label {
+  font-size: 11px;
+  color: var(--cyan-bright);
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  padding: 0 7px;
+  text-shadow: 0 0 4px rgba(0,240,255,0.35);
+  white-space: nowrap;
+  min-width: 28px;
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-left: 1px solid var(--cyan-dim, rgba(0,240,255,0.3));
+  border-right: 1px solid var(--cyan-dim, rgba(0,240,255,0.3));
+}
+
+/* Changed amber reference for btn-edit to cyan/white */
+.msg-action-btn.btn-edit { border-color: var(--white); color: var(--white); }
+.msg-action-btn.btn-edit:hover { background: var(--white); color: var(--black); box-shadow: 0 0 10px rgba(255,255,255,0.5); }
+
+/* Edit mode */
+.edit-textarea {
+  width: 100%;
+  background: var(--black);
+  border: 1px solid var(--magenta);
+  border-radius: var(--radius);
+  color: var(--cyan-bright);
+  font-family: var(--font);
+  font-size: 15px;
+  padding: 12px;
+  resize: vertical;
+  min-height: 80px;
+  line-height: 1.6;
+  box-shadow: inset 0 0 10px rgba(217, 0, 255, 0.1);
+}
+.edit-textarea:focus { outline: none; border-color: var(--cyan-bright); box-shadow: var(--glow-cyan); }
+.edit-actions { display: flex; gap: 8px; margin-top: 10px; justify-content: flex-end; }
+
+/* Search toggle */
+.search-toggle {
+  background: rgba(0, 243, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--cyan-dim);
+  font-size: 16px;
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--transition);
+  min-height: 48px;
+  font-family: var(--font);
+}
+.search-toggle:hover { border-color: var(--cyan-bright); color: var(--cyan-bright); box-shadow: var(--glow-cyan); }
+.search-toggle.active { border-color: var(--cyan-bright); color: var(--black); background: var(--cyan-bright); box-shadow: var(--glow-cyan); }
+
+/* Typing indicator */
+.typing-indicator { display: inline-flex; gap: 6px; padding: 4px 8px; background: rgba(0,0,0,0.3); border-radius: 12px; margin-left: 8px; }
+.typing-indicator span {
+  width: 6px; height: 6px;
+  background: var(--magenta);
+  border-radius: 50%;
+  animation: blink-cursor 1.2s infinite ease-in-out;
+  box-shadow: var(--glow-magenta);
+}
+.typing-indicator span:nth-child(1) { animation-delay: 0s; }
+.typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+.typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink-cursor { 0%, 100% { transform: scale(0.5); opacity: 0.5; } 50% { transform: scale(1.2); opacity: 1; } }
+
+/* ========================================================
+   WELCOME / MOTD
+======================================================== */
+.welcome {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 40px;
+  gap: 16px;
+}
+.welcome h2 {
+  font-size: 24px;
+  color: var(--white);
+  letter-spacing: 6px;
+  text-transform: uppercase;
+  text-shadow: var(--glow-text-c);
+  animation: crt-flicker 3s infinite alternate;
+}
+.welcome h2::before { content: ">< "; color: var(--cyan-bright); }
+.welcome h2::after { content: " _"; color: var(--magenta); animation: blink-cursor 1s infinite step-end; }
+.welcome p { color: var(--cyan-mid); font-size: 15px; max-width: 500px; line-height: 1.8; background: rgba(0,0,0,0.4); padding: 10px 20px; border-radius: var(--radius); border: 1px dashed var(--border); }
+
+/* ========================================================
+   INPUT / STDIN
+======================================================== */
+.input-area {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(10px);
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  position: relative;
+  z-index: 5;
+}
+
+#msg-input {
+  flex: 1;
+  background: var(--black);
+  border: 1px solid var(--cyan-dim);
+  border-radius: var(--radius);
+  color: var(--cyan-bright);
+  font-family: var(--font);
+  font-size: 15px;
+  padding: 12px 16px;
+  resize: none;
+  min-height: 48px;
+  max-height: 250px;
+  line-height: 1.6;
+  transition: all var(--transition);
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.8);
+}
+#msg-input:focus { outline: none; border-color: var(--cyan-bright); box-shadow: var(--glow-cyan), inset 0 0 10px rgba(0,243,255,0.1); }
+#msg-input::placeholder { color: rgba(0, 243, 255, 0.3); }
+
+#send-btn { padding: 12px 24px; min-height: 48px; font-size: 14px; }
+#stop-btn { padding: 12px 20px; min-height: 48px; border-color: var(--red-neon); color: var(--red-neon); }
+#stop-btn:hover { background: var(--red-neon); color: var(--white); box-shadow: var(--glow-red); }
+
+.context-info {
+  padding: 6px 20px;
+  font-size: 11px;
+  color: var(--cyan-dim);
+  background: var(--black);
+  font-family: var(--font);
+  letter-spacing: 1px;
+  text-align: right;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Auto-continue chain indicator ─────────────────────────────
+   Shown above the input area while {{auto_continue_N}} chain is
+   active. Magenta accent (same family as branch nav) so it reads
+   as "the system is doing something automatic" rather than a
+   regular status line. The pulse dot makes it impossible to miss
+   that something is queued. */
+.auto-continue-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 16px;
+  font-size: 11px;
+  font-family: var(--font);
+  letter-spacing: 1.5px;
+  font-weight: 700;
+  color: var(--magenta);
+  background: linear-gradient(90deg, rgba(217,0,255,0.10), rgba(217,0,255,0.04));
+  border-top: 1px solid var(--magenta-dim, rgba(217,0,255,0.4));
+  border-bottom: 1px solid rgba(217,0,255,0.15);
+  text-shadow: 0 0 4px rgba(217,0,255,0.45);
+}
+.auto-continue-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--magenta);
+  box-shadow: 0 0 8px rgba(217,0,255,0.9), 0 0 14px rgba(217,0,255,0.5);
+  flex-shrink: 0;
+  animation: autoContinuePulse 1.4s ease-in-out infinite;
+}
+@keyframes autoContinuePulse {
+  0%, 100% { opacity: 1;   transform: scale(1); }
+  50%      { opacity: 0.3; transform: scale(0.75); }
+}
+.auto-continue-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.auto-continue-cancel {
+  background: transparent;
+  border: 1px solid var(--magenta);
+  color: var(--magenta);
+  font-family: var(--font);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  padding: 3px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+.auto-continue-cancel:hover {
+  background: var(--magenta);
+  color: var(--white);
+  box-shadow: var(--glow-magenta);
+}

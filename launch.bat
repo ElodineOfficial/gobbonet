@@ -17,6 +17,98 @@ setlocal EnableDelayedExpansion
 title Gobbonet - Local AI Chat [llama.cpp]
 color 0A
 
+:: ---------------------------------------------------------------
+:: PREFLIGHT -- confirm the external tools this script leans on.
+::
+:: All four ship in System32 on Windows 10 1803+, so on a healthy box
+:: this costs a few milliseconds and prints nothing. It exists because
+:: when one of them is missing the failure used to surface several
+:: steps later disguised as something else -- a download that "failed"
+:: with an empty log, or a password prompt that silently wrote nothing.
+::
+:: Each probe RUNS the tool rather than looking for the file, so a
+:: present-but-broken tool is caught too.
+:: ---------------------------------------------------------------
+set "HAVE_CURL="
+set "HAVE_PS="
+set "HAVE_CERTUTIL="
+set "HAVE_TAR="
+
+curl.exe --version >nul 2>&1
+if not errorlevel 1 set "HAVE_CURL=1"
+
+:: An exit-code check is NOT enough here. Wine ships a powershell.exe
+:: stub that exits cleanly while being unable to execute anything, so
+:: "did it return 0" waves those systems through to fail much later
+:: inside fileserver.ps1 with something unreadable. Instead we require
+:: PowerShell to echo a marker back AND to resolve the .NET type the
+:: file server is actually built on. Either failure means there is no
+:: usable PowerShell on this machine.
+set "PS_PROBE="
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "$null=[System.Net.HttpListener]; Write-Output 'GOBBONET_PS_OK'" 2^>nul`) do set "PS_PROBE=%%P"
+if /i "!PS_PROBE!"=="GOBBONET_PS_OK" set "HAVE_PS=1"
+
+certutil -? >nul 2>&1
+if not errorlevel 1 set "HAVE_CERTUTIL=1"
+
+tar --version >nul 2>&1
+if not errorlevel 1 set "HAVE_TAR=1"
+
+:: Are we on Wine? A registry probe answers this without needing
+:: PowerShell -- which matters, because putting this notice inside
+:: hardware-probe.ps1 would be useless on exactly the systems that
+:: need to see it.
+set "ON_WINE="
+reg query "HKCU\Software\Wine" >nul 2>&1
+if not errorlevel 1 set "ON_WINE=1"
+
+if defined ON_WINE (
+    echo.
+    echo  [*] Looks like you're running under Wine on Linux.
+    echo.
+    echo      GobboNet isn't built for Linux yet. That's on the list,
+    echo      just not today. The Windows-specific parts are PowerShell
+    echo      and a handful of System32 tools.
+    echo.
+    echo      If you're comfortable modifying things, carry on -- people
+    echo      have already got it running this way. Nothing below will
+    echo      stop you; you'll just be patching around the gaps yourself.
+    echo.
+)
+
+if not defined HAVE_PS (
+    echo.
+    echo  [*] No working PowerShell found.
+    echo.
+    echo      GobboNet leans on it hard: the chat server itself
+    echo      ^(fileserver.ps1^), the hardware probe and the model
+    echo      identifier are all PowerShell. Those parts won't start
+    echo      without it.
+    echo.
+    echo      Worth knowing: Wine ships a powershell.exe that exists but
+    echo      can't actually run anything, so finding the file is not the
+    echo      same as having it work. Check with:
+    echo          powershell -Command "Write-Output 'ok'"
+    echo.
+    echo      On real Windows this usually means PowerShell was removed
+    echo      or blocked by group policy.
+    echo.
+    echo      Continuing anyway. If you've swapped those pieces out
+    echo      yourself, this message is expected -- ignore it.
+    echo.
+)
+
+if not defined HAVE_CURL (
+    echo  [*] curl.exe not found -- using PowerShell for downloads instead.
+    echo      Slower and without a progress bar, but functional. curl ships
+    echo      in System32 on Windows 10 1803+; a missing one usually means
+    echo      System32 has been dropped from PATH.
+)
+if not defined HAVE_CERTUTIL (
+    echo  [*] certutil.exe not found -- downloads cannot be checksum-verified.
+    echo      They will still be size-checked before use.
+)
+
 :: ===============================================================
 :: CONFIG - edit these if you want a different model or port
 :: ===============================================================
@@ -268,6 +360,98 @@ echo }
 powershell -NoProfile -ExecutionPolicy Bypass -File "!PW_SCRIPT!"
 del /f /q "!PW_SCRIPT!" >nul 2>&1
 set "GOBBONET_SECRET_OUT="
+
+:: Verify what actually reached the disk, rather than assuming PowerShell
+:: succeeded. It can fail here in ways that print nothing useful: an
+:: execution policy that blocks -File, a Set-Content -NoNewline on
+:: PowerShell older than 5.0, or a redirected stdin that makes Read-Host
+:: return empty. Every one of those used to surface as "No password was
+:: set. Cannot start securely." several lines later, with no hint why.
+::
+:: The file must be one line of <hex>:<hex> -- that is exactly what
+:: fileserver.ps1 parses at startup, so if it does not match here it was
+:: never going to work there either.
+set "PW_OK="
+set "PW_LINE="
+set "PW_TRIES=0"
+
+:pw_verify_read
+set /a PW_TRIES+=1
+set "PW_LINE="
+if exist "!SECRET_FILE!" (
+    for /f "usebackq delims=" %%S in ("!SECRET_FILE!") do if not defined PW_LINE set "PW_LINE=%%S"
+)
+:: Antivirus real-time scanning can hold a brief lock on a file the instant
+:: it is created, so the first read straight after Set-Content occasionally
+:: comes back empty through nobody's fault. Give it a few seconds before
+:: concluding anything.
+if not defined PW_LINE if !PW_TRIES! lss 5 (
+    timeout /t 1 /nobreak >nul 2>&1
+    goto :pw_verify_read
+)
+
+if not defined PW_LINE goto :pw_verdict
+if not defined HAVE_PS goto :pw_batch_check
+
+:: Ask the consumer's own question. Passing through an environment variable
+:: rather than interpolating keeps a malformed secret off the command line.
+set "GN_PWCHECK=!PW_LINE!"
+powershell -NoProfile -Command "if ($env:GN_PWCHECK -match '^([0-9a-fA-F]+):([0-9a-fA-F]+)$') { exit 0 } else { exit 1 }" >nul 2>&1
+if not errorlevel 1 set "PW_OK=1"
+set "GN_PWCHECK="
+goto :pw_verdict
+
+:pw_batch_check
+:: No PowerShell to ask. "Something on both sides of a colon" is the most a
+:: batch file can honestly determine, and it is deliberately looser than the
+:: real check rather than tighter -- a validator that is stricter than its
+:: consumer rejects working configurations.
+for /f "tokens=1,2 delims=:" %%A in ("!PW_LINE!") do if not "%%A"=="" if not "%%B"=="" set "PW_OK=1"
+
+:pw_verdict
+if defined PW_OK goto :pw_done
+
+:: Do NOT delete. An earlier version did, and when this check was wrong it
+:: destroyed a perfectly good password file and forced setup on every
+:: launch. Renaming lets setup run again next time while keeping the
+:: evidence for anyone diagnosing it.
+if exist "!SECRET_FILE!" move /y "!SECRET_FILE!" "!SECRET_FILE!.bad" >nul 2>&1
+
+echo.
+echo  [ERROR] The password file could not be read back.
+echo.
+if not defined PW_LINE (
+    echo   Nothing could be read from the file after 5 attempts. That
+    echo   usually means it was never written, or something is holding it
+    echo   open. Windows Defender's real-time scanning can do that briefly;
+    echo   an exclusion for this folder rules it out.
+) else (
+    echo   The file was read, but its contents are not in the form
+    echo   fileserver.ps1 can parse.
+)
+echo.
+echo   The file is one line, no trailing newline, in this exact form:
+echo.
+echo       salt:hash
+echo.
+echo   salt = 32 lowercase hex characters, from 16 random bytes
+echo   hash = sha256 of salt+password, as 64 lowercase hex characters
+echo.
+echo   The hash covers the salt and the password concatenated, in that
+echo   order, encoded UTF-8. Save the result as:
+echo       !SECRET_FILE!
+echo.
+echo   It must be plain ASCII with no byte-order mark. Writing it from
+echo   PowerShell with ^> or Out-File produces UTF-16 and will not work;
+echo   use Set-Content -Encoding ascii -NoNewline instead.
+echo.
+if exist "!SECRET_FILE!.bad" (
+    echo   What was actually written has been kept for inspection at:
+    echo       !SECRET_FILE!.bad
+    echo.
+)
+
+:pw_done
 echo.
 exit /b
 
@@ -300,7 +484,7 @@ if exist "!SERVER_EXE!" (
 
 :: Server not at expected root - check subdirectories (common after zip extraction)
 if exist "!LLAMA_DIR!" (
-    for /r "!LLAMA_DIR!" %%F in (llama-server.exe) do (
+    for /r "!LLAMA_DIR!" %%F in (llama-server.exe) do if exist "%%F" (
         echo  [OK] Found llama-server in subdirectory: %%F
         set "SERVER_EXE=%%F"
         set "LLAMA_DIR=%%~dpF"
@@ -375,8 +559,8 @@ set "LLAMA_ASSET=llama-!LLAMA_PIN_TAG!-bin-win-vulkan-x64.zip"
 set "LLAMA_URL=https://github.com/ggml-org/llama.cpp/releases/download/!LLAMA_PIN_TAG!/!LLAMA_ASSET!"
 set "LLAMA_ZIP=%TEMP%\!LLAMA_ASSET!"
 
-curl.exe -L --fail --retry 3 --progress-bar -o "!LLAMA_ZIP!" "!LLAMA_URL!"
-if errorlevel 1 (
+call :http_get "!LLAMA_URL!" "!LLAMA_ZIP!"
+if not "!HTTP_OK!"=="1" (
     echo.
     echo  [ERROR] Download failed -- curl could not fetch the release zip.
     echo          Common causes: no internet, GitHub unreachable, or this
@@ -442,7 +626,7 @@ echo  [OK] Extracted to: !LLAMA_DIR!\
 :: After extraction, the exe might be in a subdirectory. Find it.
 if not exist "!SERVER_EXE!" (
     echo  [..] Searching for llama-server.exe in extracted files...
-    for /r "!LLAMA_DIR!" %%F in (llama-server.exe) do (
+    for /r "!LLAMA_DIR!" %%F in (llama-server.exe) do if exist "%%F" (
         echo  [OK] Found: %%F
         set "SERVER_EXE=%%F"
         set "LLAMA_DIR=%%~dpF"
@@ -856,6 +1040,19 @@ goto :fatal
 :download_model
 set "DL_URL=https://huggingface.co/!DL_REPO!/resolve/main/!DL_FILE!"
 set "GGUF_PATH=!MODEL_DIR!\!DL_FILE!"
+set "GGUF_PART=!MODEL_DIR!\!DL_FILE!.part"
+
+:: If the file is already in models\, use it and download nothing.
+:: This is what makes hand-placing a .gguf a supported way to install
+:: one: we never fetch over it, never hash it against a pointer we did
+:: not fetch it from, and never delete it. Before this guard existed,
+:: picking a model you had already copied in by hand and then hitting
+:: any download error would remove your file.
+if exist "!GGUF_PATH!" (
+    echo.
+    echo  [OK] Already in models\ -- skipping download: !DL_FILE!
+    goto :model_file_ready
+)
 
 echo.
 echo  [..] Downloading: !DL_FILE!
@@ -866,14 +1063,17 @@ echo       This is a large file. It may take 10-30 minutes
 echo       depending on your connection speed.
 echo.
 
-curl.exe -L -o "!GGUF_PATH!" "!DL_URL!" --progress-bar
-if errorlevel 1 (
+:: Download to <name>.part and rename only after it verifies. Nothing in
+:: models\ that this script did not create is ever touched, and an aborted
+:: download cannot leave a half-file for the models\*.gguf scan to find.
+call :http_get "!DL_URL!" "!GGUF_PART!"
+if not "!HTTP_OK!"=="1" (
     echo.
     echo  [ERROR] Download failed.
     echo         Try downloading manually:
     echo         !DL_URL!
     echo         Save to: !MODEL_DIR!\
-    del "!GGUF_PATH!" 2>nul
+    del "!GGUF_PART!" 2>nul
     goto :fatal
 )
 
@@ -896,8 +1096,8 @@ set "PTR_FILE=%TEMP%\gobbonet_ptr_%RANDOM%.txt"
 set "VERIFY_RESULT=2"
 
 echo  [..] Fetching expected SHA-256 from HuggingFace...
-curl.exe -s -L --fail -o "!PTR_FILE!" "!POINTER_URL!"
-if errorlevel 1 (
+call :http_get "!POINTER_URL!" "!PTR_FILE!" quiet
+if not "!HTTP_OK!"=="1" (
     echo  [WARN] Could not fetch the HuggingFace checksum pointer.
     echo         Skipping hash check; size sanity check still applies.
     goto :model_verify_done
@@ -913,7 +1113,7 @@ if not defined MODEL_EXPECTED (
 )
 
 set "MODEL_ACTUAL="
-for /f "skip=1 delims=" %%H in ('certutil -hashfile "!GGUF_PATH!" SHA256 2^>nul') do if not defined MODEL_ACTUAL set "MODEL_ACTUAL=%%H"
+for /f "skip=1 delims=" %%H in ('certutil -hashfile "!GGUF_PART!" SHA256 2^>nul') do if not defined MODEL_ACTUAL set "MODEL_ACTUAL=%%H"
 set "MODEL_ACTUAL=!MODEL_ACTUAL: =!"
 echo  [..] Verifying download against it...
 if /i "!MODEL_ACTUAL!"=="!MODEL_EXPECTED!" (
@@ -933,12 +1133,12 @@ if "!VERIFY_RESULT!"=="1" (
     echo  [ERROR] The downloaded model failed its integrity check and has
     echo          been deleted. This can mean a corrupted download or that
     echo          the file was tampered with. Try again, or download manually.
-    del "!GGUF_PATH!" 2>nul
+    del "!GGUF_PART!" 2>nul
     goto :fatal
 )
 
 :: Sanity check - file should be at least 1 GB
-for %%A in ("!GGUF_PATH!") do set "FSIZE=%%~zA"
+for %%A in ("!GGUF_PART!") do set "FSIZE=%%~zA"
 if !FSIZE! LSS 1000000000 (
     echo  [ERROR] Downloaded file is too small - !FSIZE! bytes.
     echo         This usually means the download link returned an
@@ -947,11 +1147,21 @@ if !FSIZE! LSS 1000000000 (
     echo         The GGUF repo or filename may have changed.
     echo         Check: https://huggingface.co/bartowski
     echo         Download manually and place in: !MODEL_DIR!\
-    del "!GGUF_PATH!" 2>nul
+    del "!GGUF_PART!" 2>nul
     goto :fatal
 )
 
-echo  [OK] Model downloaded: !DL_FILE!
+:: Verified -- now put it in place under its real name.
+move /y "!GGUF_PART!" "!GGUF_PATH!" >nul
+if errorlevel 1 (
+    echo  [ERROR] Could not move the verified download into place.
+    echo          Check that nothing else has !DL_FILE! open.
+    del "!GGUF_PART!" 2>nul
+    goto :fatal
+)
+
+:model_file_ready
+echo  [OK] Model ready: !DL_FILE!
 echo.
 
 :: A just-downloaded model must be identified exactly like an existing
@@ -1022,7 +1232,7 @@ echo.
 :start_server
 echo  [..] Checking for running llama-server...
 
-curl.exe -s -o nul http://127.0.0.1:!SERVER_PORT!/health >nul 2>&1
+call :http_probe "http://127.0.0.1:!SERVER_PORT!/health"
 if not errorlevel 1 (
     echo  [OK] llama-server already running on port !SERVER_PORT!
     goto :verify_gpu
@@ -1222,7 +1432,7 @@ if !RETRIES! gtr 300 (
 timeout /t 2 /nobreak >nul
 set /p "=." <nul
 
-curl.exe -s http://127.0.0.1:!SERVER_PORT!/health 2>nul | findstr /i "ok" >nul 2>&1
+call :http_health "http://127.0.0.1:!SERVER_PORT!/health"
 if errorlevel 1 goto :wait_loop
 
 echo.
@@ -1300,7 +1510,7 @@ if /i "!EMBED_ENABLE!"=="0" (
     goto :start_proxy
 )
 
-curl.exe -s -o nul http://127.0.0.1:!EMBED_PORT!/health >nul 2>&1
+call :http_probe "http://127.0.0.1:!EMBED_PORT!/health"
 if not errorlevel 1 (
     echo  [OK] Embedding server already on :!EMBED_PORT!
     goto :start_proxy
@@ -1309,32 +1519,41 @@ if not errorlevel 1 (
 set "EMBED_PATH=!MODEL_DIR!\!EMBED_MODEL_GGUF!"
 if exist "!EMBED_PATH!" goto :embed_spawn
 
+set "EMBED_PART=!EMBED_PATH!.part"
 echo  [..] Downloading embedding model ^(one-time, ~146 MB^): !EMBED_MODEL_GGUF!
-curl.exe -L --fail --retry 3 --progress-bar -o "!EMBED_PATH!" "!EMBED_MODEL_URL!"
-if errorlevel 1 (
+call :http_get "!EMBED_MODEL_URL!" "!EMBED_PART!"
+if not "!HTTP_OK!"=="1" (
     echo  [*] Embedding model download failed -- RAG semantic search will be OFF.
     echo      Chat works normally; weighted-tag retrieval still functions.
-    del /f /q "!EMBED_PATH!" >nul 2>&1
+    del /f /q "!EMBED_PART!" >nul 2>&1
     goto :start_proxy
 )
 
 set "EMBED_ACTUAL="
-for /f "skip=1 delims=" %%H in ('certutil -hashfile "!EMBED_PATH!" SHA256 2^>nul') do if not defined EMBED_ACTUAL set "EMBED_ACTUAL=%%H"
+for /f "skip=1 delims=" %%H in ('certutil -hashfile "!EMBED_PART!" SHA256 2^>nul') do if not defined EMBED_ACTUAL set "EMBED_ACTUAL=%%H"
 set "EMBED_ACTUAL=!EMBED_ACTUAL: =!"
 if not defined EMBED_PIN_SHA256 (
     echo  [*] Embedding model not pinned. To lock it for future installs, set in launch.bat:
     echo        set "EMBED_PIN_SHA256=!EMBED_ACTUAL!"
-    goto :embed_spawn
+    goto :embed_finalize
 )
 if /i "!EMBED_ACTUAL!"=="!EMBED_PIN_SHA256!" (
     echo  [OK] Embedding model checksum verified.
-    goto :embed_spawn
+    goto :embed_finalize
 )
-echo  [*] Embedding model CHECKSUM MISMATCH -- deleting and skipping ^(RAG semantic off^).
+echo  [*] Embedding model CHECKSUM MISMATCH -- discarding and skipping ^(RAG semantic off^).
 echo        expected: !EMBED_PIN_SHA256!
 echo        actual:   !EMBED_ACTUAL!
-del /f /q "!EMBED_PATH!" >nul 2>&1
+del /f /q "!EMBED_PART!" >nul 2>&1
 goto :start_proxy
+
+:embed_finalize
+move /y "!EMBED_PART!" "!EMBED_PATH!" >nul
+if errorlevel 1 (
+    echo  [*] Could not move the embedding model into place -- RAG semantic search OFF.
+    del /f /q "!EMBED_PART!" >nul 2>&1
+    goto :start_proxy
+)
 
 :embed_spawn
 :: Write a small launcher (mirrors the chat server's .llama-launch.cmd).
@@ -1363,7 +1582,7 @@ if !ERETRIES! gtr 40 (
     goto :start_proxy
 )
 timeout /t 1 /nobreak >nul
-curl.exe -s -o nul http://127.0.0.1:!EMBED_PORT!/health >nul 2>&1
+call :http_probe "http://127.0.0.1:!EMBED_PORT!/health"
 if errorlevel 1 goto :embed_wait
 echo  [OK] Embedding server ready on :!EMBED_PORT!
 echo.
@@ -1379,7 +1598,7 @@ echo.
 :: ---------------------------------------------------------------
 :start_proxy
 
-curl.exe -s -o nul http://127.0.0.1:11435/health >nul 2>&1
+call :http_probe "http://127.0.0.1:11435/health"
 if not errorlevel 1 (
     echo  [OK] Search proxy on :11435
     goto :launch
@@ -1397,7 +1616,7 @@ if !PRETRIES! gtr 10 (
     goto :launch
 )
 timeout /t 1 /nobreak >nul
-curl.exe -s -o nul http://127.0.0.1:11435/health >nul 2>&1
+call :http_probe "http://127.0.0.1:11435/health"
 if errorlevel 1 goto :proxy_wait
 echo  [OK] Search proxy on :11435
 echo.
@@ -1414,7 +1633,7 @@ if not exist "%~dp0chat.html" (
 
 :: Start a lightweight HTTP file server on port 8080
 :: This lets your phone load chat.html over the network
-curl.exe -s -o nul http://127.0.0.1:8080/ >nul 2>&1
+call :http_probe "http://127.0.0.1:8080/"
 if not errorlevel 1 (
     echo  [OK] File server already running on :8080
     goto :get_lan_ip
@@ -1458,7 +1677,7 @@ if !FRETRIES! gtr 8 (
     goto :get_lan_ip
 )
 timeout /t 1 /nobreak >nul
-curl.exe -s -o nul http://127.0.0.1:8080/ >nul 2>&1
+call :http_probe "http://127.0.0.1:8080/"
 if errorlevel 1 goto :fserver_wait
 echo  [OK] File server on :8080
 
@@ -1620,7 +1839,7 @@ call :minimize_window
 :monitor_loop
 timeout /t 15 /nobreak >nul
 
-curl.exe -s http://127.0.0.1:!SERVER_PORT!/health 2>nul | findstr /i "ok" >nul 2>&1
+call :http_health "http://127.0.0.1:!SERVER_PORT!/health"
 if not errorlevel 1 goto :monitor_loop
 
 :: ---- llama-server is unreachable ----
@@ -1666,7 +1885,7 @@ if !RRETRIES! gtr 90 (
 )
 timeout /t 2 /nobreak >nul
 set /p "=." <nul
-curl.exe -s http://127.0.0.1:!SERVER_PORT!/health 2>nul | findstr /i "ok" >nul 2>&1
+call :http_health "http://127.0.0.1:!SERVER_PORT!/health"
 if errorlevel 1 goto :restart_wait
 
 echo.
@@ -1685,3 +1904,70 @@ exit /b
 :restore_window
 powershell -NoProfile -command "try{Add-Type -Name W -Namespace C -MemberDefinition '[DllImport(\"kernel32.dll\")]public static extern IntPtr GetConsoleWindow();[DllImport(\"user32.dll\")]public static extern bool ShowWindow(IntPtr h,int c);' -EA Stop}catch{};[C.W]::ShowWindow([C.W]::GetConsoleWindow(),9)" >nul 2>&1
 exit /b
+
+:: ---------------------------------------------------------------
+:: HTTP HELPERS
+::
+:: curl is always tried first, with the exact flags the inline calls
+:: used before, so on any machine that has curl -- which is every
+:: supported Windows -- the command executed is unchanged. The
+:: PowerShell branch only ever runs where the old inline call was
+:: already failing outright.
+::
+:: URLs and paths are handed to PowerShell through environment
+:: variables rather than interpolated into -Command, so a space or a
+:: quote in a path cannot break the command line.
+:: ---------------------------------------------------------------
+
+:: :http_get <url> <output> [quiet]   -> sets HTTP_OK to 1 or 0
+:http_get
+setlocal EnableDelayedExpansion
+set "_U=%~1"
+set "_O=%~2"
+set "_Q=%~3"
+set "_OK=0"
+if defined HAVE_CURL (
+    if /i "!_Q!"=="quiet" (
+        curl.exe -s -L --fail --retry 3 -o "!_O!" "!_U!"
+    ) else (
+        curl.exe -L --fail --retry 3 --progress-bar -o "!_O!" "!_U!"
+    )
+    if not errorlevel 1 set "_OK=1"
+)
+if "!_OK!"=="0" if defined HAVE_PS (
+    if /i not "!_Q!"=="quiet" echo       [..] fetching via PowerShell -- no progress bar, please wait...
+    set "GN_URL=!_U!"
+    set "GN_OUT=!_O!"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $w = New-Object Net.WebClient; $w.DownloadFile($env:GN_URL, $env:GN_OUT); exit 0 } catch { exit 1 }"
+    if not errorlevel 1 set "_OK=1"
+)
+endlocal & set "HTTP_OK=%_OK%"
+goto :eof
+
+:: :http_probe <url>   -> errorlevel 0 if something answered
+:http_probe
+setlocal EnableDelayedExpansion
+set "_RC=1"
+if defined HAVE_CURL (
+    curl.exe -s -o nul "%~1" >nul 2>&1
+    if not errorlevel 1 set "_RC=0"
+) else (
+    set "GN_URL=%~1"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r=[Net.WebRequest]::Create($env:GN_URL); $r.Timeout=3000; $r.GetResponse().Close(); exit 0 } catch { exit 1 }" >nul 2>&1
+    if not errorlevel 1 set "_RC=0"
+)
+endlocal & exit /b %_RC%
+
+:: :http_health <url>  -> errorlevel 0 if the body contains "ok"
+:http_health
+setlocal EnableDelayedExpansion
+set "_RC=1"
+if defined HAVE_CURL (
+    curl.exe -s "%~1" 2>nul | findstr /i "ok" >nul 2>&1
+    if not errorlevel 1 set "_RC=0"
+) else (
+    set "GN_URL=%~1"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $c=(New-Object Net.WebClient).DownloadString($env:GN_URL); if ($c -match 'ok') { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
+    if not errorlevel 1 set "_RC=0"
+)
+endlocal & exit /b %_RC%

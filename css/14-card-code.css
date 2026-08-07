@@ -1,0 +1,54 @@
+/* @gobbonet-split css/14-card-code.css
+   Hand-written module -- NOT produced by refactor-split.py.
+   Per-character custom code box in the character editor.
+   Load order is a contract -- see REFACTOR-PLAN.md before reordering.
+   @end-split-header */
+/* ========================================================
+   CARD CUSTOM CODE
+   Loads after every generated stylesheet so these rules win
+   without needing !important on anything.
+======================================================== */
+
+#card-custom-code {
+  font-family: 'Atkinson Hyperlegible Mono', ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  tab-size: 2;
+  resize: vertical;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;          /* code should scroll, not wrap mid-expression */
+}
+
+/* Checkbox row sits above the box so the opt-in is read before the code. */
+.code-enable-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 400;
+  cursor: pointer;
+  user-select: none;
+}
+.code-enable-row input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--green-neon, #00ff73);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.code-enable-row span { opacity: 0.85; }
+
+/* Status line: hook list when loaded, message when a hook throws.
+   Colour is set from JS so it can switch between the two. */
+#card-code-status {
+  font-family: 'Atkinson Hyperlegible Mono', ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  min-height: 14px;
+  word-break: break-word;
+}
+
+@media (max-width: 700px) {
+  #card-custom-code { font-size: 11px; }
+}

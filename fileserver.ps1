@@ -8,7 +8,11 @@
 #                   /search/*  -> http://127.0.0.1:$SearchPort  (Ollama search proxy)
 #                   /embed/*   -> http://127.0.0.1:$EmbedPort   (embedding llama-server, optional)
 #   3. Persist a JSON blob at /state for cross-device state sync (GET + POST).
-#   4. Hot-swap the active GGUF without rebooting:
+#   4. Run detached generation jobs at /llm/jobs* -- the server makes the
+#      llama-server call itself in a worker runspace and spools the raw SSE
+#      stream to .jobs\, so replies keep generating (and remain fetchable)
+#      after the browser tab navigates away, closes, or a phone locks.
+#   5. Hot-swap the active GGUF without rebooting:
 #         POST /swap-model   {"file":"<name>.gguf"}  -> kicks off the swap,
 #                                                       returns 202 immediately.
 #         GET  /swap-status                          -> polls status; promotes
@@ -61,6 +65,15 @@ $SwapLock     = Join-Path $Root '.swap-in-progress'
 $SwapStatus   = Join-Path $Root '.swap-status.json'
 $ModelsListJs = Join-Path $Root 'models-list.json'
 $ActiveJson   = Join-Path $Root 'active-model.json'
+
+# Detached-generation spool directory (see "Generation jobs" section). Each
+# job is three small files: <id>.sse (raw upstream byte stream), <id>.json
+# (status), <id>.cancel (flag). Transient by design -- swept on a retention
+# timer, deleted on client ack.
+$JobsDir          = Join-Path $Root '.jobs'
+$JobMaxAgeHours   = 48    # retention backstop if a client never acks
+$JobMaxConcurrent = 4     # llama-server runs --parallel 1; extras just queue
+$Script:JobWorkers = @{}  # jobId -> @{ PS; Handle; Runspace } for live runspaces
 
 # --- Access control ----------------------------------------------------------
 # A single shared password gates the whole server. Anyone on the LAN can REACH
@@ -125,6 +138,30 @@ Write-Host ("  hot-swap={0}" -f $(if ($HotSwapEnabled) { 'enabled' } else { 'dis
 # confuse both the monitor loop and any chat tab polling /swap-status.
 if (Test-Path $SwapLock)   { Remove-Item $SwapLock   -Force -ErrorAction SilentlyContinue }
 if (Test-Path $SwapStatus) { Remove-Item $SwapStatus -Force -ErrorAction SilentlyContinue }
+
+# Generation-job hygiene: a fileserver restart kills any in-flight worker
+# runspaces (they live in this process), so every job still marked 'running'
+# is now an orphan. Flip those to 'interrupted' so a resuming client gets a
+# truthful terminal answer instead of polling forever, then sweep files past
+# the retention window so spools never accumulate.
+if (-not (Test-Path $JobsDir)) { New-Item -ItemType Directory -Path $JobsDir -Force | Out-Null }
+foreach ($jf in @(Get-ChildItem $JobsDir -Filter '*.json' -ErrorAction SilentlyContinue)) {
+    try {
+        $st = Get-Content $jf.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($st.status -eq 'running') {
+            $st.status = 'interrupted'
+            $st | Add-Member -MemberType NoteProperty -Name 'error' -Value 'fileserver restarted mid-generation' -Force
+            # Write-FileUtf8 isn't defined until the Helpers section below,
+            # and this hygiene pass runs at load time -- write inline (BOM-less).
+            [System.IO.File]::WriteAllText($jf.FullName, ($st | ConvertTo-Json -Compress),
+                                           (New-Object System.Text.UTF8Encoding($false)))
+        }
+    } catch { }
+}
+foreach ($old in @(Get-ChildItem $JobsDir -ErrorAction SilentlyContinue |
+                   Where-Object { $_.LastWriteTime -lt (Get-Date).AddHours(-$JobMaxAgeHours) })) {
+    Remove-Item $old.FullName -Force -ErrorAction SilentlyContinue
+}
 
 # --- Helpers -----------------------------------------------------------------
 
@@ -330,6 +367,11 @@ function Resolve-StaticPath {
     # canonicalize, checking the result still starts with $Root.
     $rel = [System.Web.HttpUtility]::UrlDecode($UrlPath.TrimStart('/'))
     if ($rel -match '(^|[\\/])\.\.([\\/]|$)') { return $null }
+    # Dot-prefixed files/dirs are server internals (.jobs spools,
+    # .gobbonet-state.json, .swap-status.json, .llama-launch.cmd) -- everything
+    # the client legitimately needs from them is exposed through dedicated
+    # routes (/state, /swap-status, /llm/jobs/*), so refuse raw static reads.
+    if ($rel -match '(^|[\\/])\.') { return $null }
     $candidate = Join-Path $Root $rel
     try {
         $full = [System.IO.Path]::GetFullPath($candidate)
@@ -522,6 +564,406 @@ function Handle-State {
         return
     }
     Write-Json $Response 405 @{ error = 'method not allowed' }
+}
+
+# --- Generation jobs (detached streaming relay) ------------------------------
+#
+# WHY THIS EXISTS: chat.html used to hold the /llm streaming fetch open in the
+# browser for the whole generation. Any navigation -- new URL in the tab, tab
+# close, phone screen lock -- tore down that fetch, the proxy connection to
+# llama-server collapsed, and llama-server cancelled the slot. The reply died
+# with the page. No browser mechanism can reliably keep a cross-navigation
+# SSE stream alive (service workers get frozen too, and mobile OSes kill
+# backgrounded sockets within seconds).
+#
+# So the long-lived connection moves HERE, into the one process that never
+# navigates away. A "job" is:
+#   POST   /llm/jobs            body = the exact llama-server chat/completions
+#                               request -> spawns a worker runspace that makes
+#                               the upstream call itself and spools the RAW SSE
+#                               byte stream to .jobs/<id>.sse. Returns {id}
+#                               immediately.
+#   GET    /llm/jobs/<id>?from=N[&max=M]
+#                               -> { status, size, next, chunk_b64, error }
+#                               New spool bytes from offset N (base64, so the
+#                               JSON envelope never fights partial UTF-8 at
+#                               chunk boundaries). max=0 is a status-only peek.
+#   POST   /llm/jobs/<id>/cancel-> flag file; worker aborts the upstream
+#                               request (llama-server frees the slot) and
+#                               marks the job 'cancelled'.
+#   DELETE /llm/jobs/<id>       -> client ack after it has folded the reply
+#                               into its history; removes the spool files.
+#
+# The client polls, feeds the bytes through the SAME parser pipeline it used
+# for live streaming, and -- crucially -- can reattach after a navigation and
+# replay the transcript from byte 0 with identical results. Terminal statuses:
+# done | cancelled | error | interrupted (fileserver restarted mid-job).
+#
+# Spooling raw bytes (instead of parsed text) is deliberate: thinking-format
+# splitting, tool-call unwrapping, and reasoning-field routing all stay in
+# chat.html where they already live. This file stays a dumb, faithful pipe.
+#
+# Side benefit: the listener loop no longer blocks for entire generations
+# (the long upstream read runs in the worker runspace), so /state syncs,
+# static files, and /swap-status stay responsive while the model writes.
+#
+# Privacy note: spool files contain reply text, same sensitivity class as the
+# existing .gobbonet-state.json backup sitting next to them. They are excluded
+# from static serving, deleted on ack, and swept after $JobMaxAgeHours.
+
+function Get-JobPaths {
+    param([string]$Id)
+    return @{
+        Sse    = Join-Path $JobsDir ($Id + '.sse')
+        Status = Join-Path $JobsDir ($Id + '.json')
+        Cancel = Join-Path $JobsDir ($Id + '.cancel')
+    }
+}
+
+# Status files are small and rewritten whole by the worker; a read can race a
+# write and momentarily see a truncated file. Retry briefly instead of failing.
+function Read-JobStatus {
+    param([string]$Id)
+    $p = Get-JobPaths $Id
+    for ($i = 0; $i -lt 3; $i++) {
+        try {
+            $txt = [System.IO.File]::ReadAllText($p.Status)
+            if (-not [string]::IsNullOrEmpty($txt)) { return ($txt | ConvertFrom-Json) }
+        } catch { Start-Sleep -Milliseconds 25 }
+    }
+    return $null
+}
+
+# Reap finished worker runspaces so handles don't pile up across a long
+# uptime. Called opportunistically from Handle-Jobs.
+function Remove-CompletedJobWorkers {
+    $done = @()
+    foreach ($id in @($Script:JobWorkers.Keys)) {
+        $w = $Script:JobWorkers[$id]
+        if ($w.Handle.IsCompleted) { $done += $id }
+    }
+    foreach ($id in $done) {
+        $w = $Script:JobWorkers[$id]
+        try { $w.PS.EndInvoke($w.Handle) } catch { }
+        try { $w.PS.Dispose() } catch { }
+        try { $w.Runspace.Dispose() } catch { }
+        $Script:JobWorkers.Remove($id)
+    }
+}
+
+# The worker body. Runs in its own runspace with NO shared state -- everything
+# it needs arrives as arguments, everything it reports goes through the two
+# spool files. Keep it that way: cross-runspace object sharing is where
+# PowerShell servers go to die.
+$Script:JobWorkerScript = {
+    param($SsePath, $StatusPath, $CancelPath, $UpstreamUrl, $BodyJson, $ApiKey)
+
+    function Write-JobStatusFile {
+        param([string]$Status, [string]$ErrorMsg)
+        try {
+            $obj = @{ status = $Status
+                      updated_at = [int64](([DateTime]::UtcNow - [DateTime]'1970-01-01').TotalSeconds) }
+            # Carry the creation-time fields (thread, started_at) forward.
+            try {
+                $prev = [System.IO.File]::ReadAllText($StatusPath) | ConvertFrom-Json
+                if ($prev.thread)     { $obj.thread     = $prev.thread }
+                if ($prev.started_at) { $obj.started_at = $prev.started_at }
+            } catch { }
+            if ($ErrorMsg) { $obj.error = $ErrorMsg }
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($StatusPath, (($obj | ConvertTo-Json -Compress)), $enc)
+        } catch { }
+    }
+
+    $cancelled = $false
+    $req = $null
+    try {
+        $req = [System.Net.HttpWebRequest]::Create($UpstreamUrl)
+        $req.Method = 'POST'
+        $req.ContentType = 'application/json'
+        $req.Accept = 'text/event-stream'
+        $req.KeepAlive = $false
+        # Hard runtime cap. Generous -- huge contexts on big models can sit in
+        # prompt processing for minutes -- but finite, so a wedged upstream
+        # can't leave a job 'running' forever.
+        $req.Timeout = 1800000
+        $req.ReadWriteTimeout = 1800000
+        if ($ApiKey -ne '') { $req.Headers.Add('Authorization', ('Bearer {0}' -f $ApiKey)) }
+
+        $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($BodyJson)
+        $reqStream = $req.GetRequestStream()
+        $reqStream.Write($bodyBytes, 0, $bodyBytes.Length)
+        $reqStream.Close()
+
+        try {
+            $resp = $req.GetResponse()
+        } catch [System.Net.WebException] {
+            if ($_.Exception.Response) {
+                # Upstream 4xx/5xx: surface llama-server's own error body --
+                # far more actionable than a generic failure.
+                $er  = $_.Exception.Response
+                $msg = ('upstream HTTP {0}' -f [int]$er.StatusCode)
+                try {
+                    $sr = New-Object System.IO.StreamReader($er.GetResponseStream())
+                    $t = $sr.ReadToEnd(); $sr.Close()
+                    if ($t) {
+                        if ($t.Length -gt 400) { $t = $t.Substring(0, 400) }
+                        $msg = $msg + ': ' + $t
+                    }
+                } catch { }
+                Write-JobStatusFile -Status 'error' -ErrorMsg $msg
+                return
+            }
+            throw
+        }
+
+        $inStream = $resp.GetResponseStream()
+        # Writer holds Write access and shares Read+Write so the poll handler
+        # (FileAccess Read, FileShare ReadWrite) can read the growing file.
+        $outStream = New-Object System.IO.FileStream($SsePath,
+                        [System.IO.FileMode]::Create,
+                        [System.IO.FileAccess]::Write,
+                        [System.IO.FileShare]::ReadWrite)
+        $buf = New-Object byte[] 8192
+        try {
+            while ($true) {
+                if (Test-Path $CancelPath) { $cancelled = $true; break }
+                # ReadAsync + timed Wait instead of a blocking Read: during
+                # prompt processing no bytes flow for a long stretch, and a
+                # blocked Read would never notice the cancel flag. This way
+                # cancellation lands within ~250ms even mid-silence.
+                $task = $inStream.ReadAsync($buf, 0, $buf.Length)
+                while (-not $task.Wait(250)) {
+                    if (Test-Path $CancelPath) { $cancelled = $true; break }
+                }
+                if ($cancelled) { break }
+                $n = $task.Result
+                if ($n -le 0) { break }
+                $outStream.Write($buf, 0, $n)
+                $outStream.Flush()
+            }
+        } finally {
+            try { $outStream.Close() } catch { }
+        }
+        if ($cancelled) { try { $req.Abort() } catch { } }
+        try { $inStream.Close() } catch { }
+        try { $resp.Close() } catch { }
+
+        if ($cancelled) { Write-JobStatusFile -Status 'cancelled' }
+        else            { Write-JobStatusFile -Status 'done' }
+    } catch {
+        if ($cancelled -or (Test-Path $CancelPath)) {
+            Write-JobStatusFile -Status 'cancelled'
+        } else {
+            $m = $_.Exception.Message
+            if ($_.Exception -is [System.AggregateException] -and $_.Exception.InnerException) {
+                $m = $_.Exception.InnerException.Message
+            }
+            Write-JobStatusFile -Status 'error' -ErrorMsg $m
+        }
+        if ($req) { try { $req.Abort() } catch { } }
+    }
+}
+
+function Handle-Jobs {
+    param($Request, $Response)
+    $path = $Request.Url.AbsolutePath
+
+    # Housekeeping piggybacks on job traffic: reap finished runspaces and
+    # (cheaply) sweep files past retention. No timers, no extra threads.
+    Remove-CompletedJobWorkers
+
+    # ---- POST /llm/jobs : create ----------------------------------------
+    if ($path -eq '/llm/jobs') {
+        if ($Request.HttpMethod -ne 'POST') {
+            Write-Json $Response 405 @{ error = 'POST only' }
+            return
+        }
+
+        # Concurrency cap. llama-server (--parallel 1) queues extras anyway;
+        # this just stops a misbehaving client from stacking workers.
+        $live = 0
+        foreach ($id in @($Script:JobWorkers.Keys)) {
+            if (-not $Script:JobWorkers[$id].Handle.IsCompleted) { $live++ }
+        }
+        if ($live -ge $JobMaxConcurrent) {
+            Write-Json $Response 429 @{ error = ('too many generations in flight ({0}); try again shortly' -f $live) }
+            return
+        }
+
+        $reader = New-Object System.IO.StreamReader($Request.InputStream, [System.Text.Encoding]::UTF8)
+        $body = $reader.ReadToEnd()
+        $reader.Close()
+        try { $null = $body | ConvertFrom-Json } catch {
+            Write-Json $Response 400 @{ error = 'body is not valid JSON' }
+            return
+        }
+
+        # Optional ?thread=<id> rides along in the status file. Purely
+        # informational (debugging, future multi-device niceties) -- the
+        # request body itself stays a byte-exact llama-server payload.
+        $threadId = ''
+        try { $threadId = [string]$Request.QueryString['thread'] } catch { }
+
+        $jobId = [guid]::NewGuid().ToString('n')
+        $p = Get-JobPaths $jobId
+
+        # Status first, then an empty spool, THEN the worker -- a poll landing
+        # one millisecond after the 202 must find both files.
+        $status = @{
+            status     = 'running'
+            thread     = $threadId
+            started_at = [int64](([DateTime]::UtcNow - [DateTime]'1970-01-01').TotalSeconds)
+        }
+        Write-FileUtf8 $p.Status ($status | ConvertTo-Json -Compress)
+        [System.IO.File]::WriteAllBytes($p.Sse, [byte[]]@())
+
+        $upstream = ('http://127.0.0.1:{0}/v1/chat/completions' -f $LlmPort)
+        try {
+            $rs = [runspacefactory]::CreateRunspace()
+            $rs.Open()
+            $psw = [powershell]::Create()
+            $psw.Runspace = $rs
+            # Sequential (not fluent-chained across lines): trailing-dot line
+            # continuation is not dependable in Windows PowerShell 5.1.
+            # Argument order MUST match the worker's param() block.
+            $null = $psw.AddScript($Script:JobWorkerScript.ToString())
+            $null = $psw.AddArgument($p.Sse)
+            $null = $psw.AddArgument($p.Status)
+            $null = $psw.AddArgument($p.Cancel)
+            $null = $psw.AddArgument($upstream)
+            $null = $psw.AddArgument($body)
+            $null = $psw.AddArgument($LlmApiKey)
+            $handle = $psw.BeginInvoke()
+            $Script:JobWorkers[$jobId] = @{ PS = $psw; Handle = $handle; Runspace = $rs }
+        } catch {
+            Write-FileUtf8 $p.Status (@{ status = 'error'; error = ('worker spawn failed: {0}' -f $_.Exception.Message) } | ConvertTo-Json -Compress)
+            Write-Json $Response 500 @{ error = ('worker spawn failed: {0}' -f $_.Exception.Message) }
+            return
+        }
+
+        Write-Host ("[jobs] started {0} (thread={1}, {2} bytes of request)" -f $jobId, $threadId, $body.Length)
+        Write-Json $Response 202 @{ id = $jobId; status = 'running' }
+        return
+    }
+
+    # ---- /llm/jobs/<id>[/cancel] ----------------------------------------
+    if ($path -match '^/llm/jobs/([0-9a-f]{32})(/cancel)?$') {
+        $jobId    = $Matches[1]
+        $isCancel = [bool]$Matches[2]
+        $p = Get-JobPaths $jobId
+
+        if (-not (Test-Path $p.Status)) {
+            Write-Json $Response 404 @{ error = 'unknown job'; id = $jobId }
+            return
+        }
+
+        if ($isCancel) {
+            if ($Request.HttpMethod -ne 'POST') {
+                Write-Json $Response 405 @{ error = 'POST only' }
+                return
+            }
+            [System.IO.File]::WriteAllText($p.Cancel, '1')
+            Write-Host ("[jobs] cancel requested: {0}" -f $jobId)
+            Write-Json $Response 200 @{ id = $jobId; status = 'cancelling' }
+            return
+        }
+
+        if ($Request.HttpMethod -eq 'DELETE') {
+            $st = Read-JobStatus $jobId
+            if ($st -and $st.status -eq 'running') {
+                # Ack for a live job: flag cancel and let the worker wind down;
+                # the retention sweep (or a later DELETE) collects the files.
+                [System.IO.File]::WriteAllText($p.Cancel, '1')
+                Write-Json $Response 202 @{ id = $jobId; status = 'cancelling' }
+                return
+            }
+            foreach ($f in @($p.Sse, $p.Status, $p.Cancel)) {
+                if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
+            }
+            Write-Json $Response 200 @{ id = $jobId; status = 'deleted' }
+            return
+        }
+
+        if ($Request.HttpMethod -ne 'GET') {
+            Write-Json $Response 405 @{ error = 'GET, POST /cancel, or DELETE' }
+            return
+        }
+
+        # ---- GET poll ----------------------------------------------------
+        $st = Read-JobStatus $jobId
+        if ($null -eq $st) {
+            Write-Json $Response 404 @{ error = 'job status unreadable'; id = $jobId }
+            return
+        }
+
+        $from = 0
+        try { $from = [int64]$Request.QueryString['from'] } catch { $from = 0 }
+        if ($from -lt 0) { $from = 0 }
+        # Per-poll byte budget. 256KB raw -> ~350KB of base64 in the JSON
+        # envelope; the client drains in a tight loop until next == size, so
+        # a big backlog (long reply, long absence) clears in a few round trips.
+        $maxBytes = 262144
+        $maxRaw = $Request.QueryString['max']
+        if ($null -ne $maxRaw -and $maxRaw -ne '') {
+            try { $maxBytes = [Math]::Max(0, [Math]::Min(262144, [int]$maxRaw)) } catch { }
+        }
+
+        $size = 0
+        $next = $from
+        $chunkB64 = ''
+        if (Test-Path $p.Sse) {
+            try {
+                $fs = New-Object System.IO.FileStream($p.Sse,
+                        [System.IO.FileMode]::Open,
+                        [System.IO.FileAccess]::Read,
+                        [System.IO.FileShare]::ReadWrite)
+                try {
+                    $size = $fs.Length
+                    if ($from -gt $size) { $from = $size; $next = $size }
+                    $want = [Math]::Min([int64]$maxBytes, $size - $from)
+                    if ($want -gt 0) {
+                        $null = $fs.Seek($from, [System.IO.SeekOrigin]::Begin)
+                        $buf = New-Object byte[] ([int]$want)
+                        $got = 0
+                        while ($got -lt $want) {
+                            $n = $fs.Read($buf, $got, [int]($want - $got))
+                            if ($n -le 0) { break }
+                            $got += $n
+                        }
+                        if ($got -gt 0) {
+                            $chunkB64 = [Convert]::ToBase64String($buf, 0, $got)
+                            $next = $from + $got
+                        }
+                    }
+                } finally { $fs.Close() }
+            } catch {
+                # Spool momentarily unreadable -- report zero progress; the
+                # client just polls again.
+                $size = $next
+            }
+        }
+
+        $out = @{
+            id     = $jobId
+            status = [string]$st.status
+            size   = $size
+            next   = $next
+        }
+        if ($chunkB64 -ne '') { $out.chunk_b64 = $chunkB64 }
+        if ($st.PSObject.Properties.Match('error').Count -gt 0 -and $st.error) { $out.error = [string]$st.error }
+        # Timing stamps for the client's response timer. started_at is set at
+        # job creation; updated_at is stamped by Write-JobStatusFile when the
+        # worker records the terminal status -- so (updated_at - started_at)
+        # is the generation's true duration even for replies that finished
+        # while no tab was attached.
+        if ($st.PSObject.Properties.Match('started_at').Count -gt 0 -and $st.started_at) { $out.started_at = [int64]$st.started_at }
+        if ($st.PSObject.Properties.Match('updated_at').Count -gt 0 -and $st.updated_at) { $out.updated_at = [int64]$st.updated_at }
+        Write-Json $Response 200 $out
+        return
+    }
+
+    Write-Json $Response 404 @{ error = 'bad jobs path'; path = $path }
 }
 
 # --- Hot model swap ----------------------------------------------------------
@@ -1019,6 +1461,7 @@ try {
 
 Write-Host ("[ok] listening on http://+:{0}/" -f $ListenPort)
 Write-Host ("[ok] access password required (salted-hash verified; set via launch.bat)")
+Write-Host ("[ok] detached generation jobs enabled (spool: {0})" -f $JobsDir)
 if ($LlmApiKey -eq '') {
     Write-Host "[warn] GEMMA_LLM_API_KEY not set -- llama-server running without --api-key (loopback bind still protects it)."
 } else {
@@ -1131,6 +1574,12 @@ while ($listener.IsListening) {
         }
         elseif ($path -eq '/swap-status') {
             Handle-SwapStatus -Request $request -Response $response
+        }
+        elseif ($path -eq '/llm/jobs' -or $path -like '/llm/jobs/*') {
+            # Must precede the /llm/* proxy catch-all -- these are OUR routes,
+            # not llama-server's. Same-origin under /llm keeps the client's
+            # LLAMA_URL-relative addressing (and the session cookie) working.
+            Handle-Jobs -Request $request -Response $response
         }
         elseif ($path -eq '/llm' -or $path -like '/llm/*') {
             Invoke-Proxy -Request $request -Response $response -Prefix '/llm' -UpstreamPort $LlmPort -InjectLlmKey $true

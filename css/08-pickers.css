@@ -1,0 +1,88 @@
+/* @gobbonet-split css/08-pickers.css
+   Moved verbatim from style.css lines 1465-1548.
+   colour pickers -- also holds the 900px tablet breakpoint
+   Load order is a contract -- see REFACTOR-PLAN.md before reordering.
+   @end-split-header */
+/* ========================================================
+   COLOR PICKERS — text & dialog color customization
+======================================================== */
+.color-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-top: 6px;
+}
+.color-row label.color-label {
+  display: inline;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cyan-mid);
+  text-transform: none;
+  letter-spacing: 0.5px;
+  text-shadow: none;
+  margin-bottom: 0;
+  white-space: nowrap;
+}
+.color-swatch-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+input[type="color"].color-swatch {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--black);
+  cursor: pointer;
+  padding: 2px;
+  transition: border-color var(--transition);
+}
+input[type="color"].color-swatch:hover {
+  border-color: var(--cyan-bright);
+}
+input[type="color"].color-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+input[type="color"].color-swatch::-webkit-color-swatch { border: none; border-radius: 2px; }
+input[type="color"].color-swatch::-moz-color-swatch { border: none; border-radius: 2px; }
+.color-hex {
+  width: 80px;
+  font-size: 12px !important;
+  padding: 4px 8px !important;
+  text-transform: uppercase;
+}
+.color-preview-text {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  background: rgba(0,0,0,0.4);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+/* Chat background image support */
+.messages {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* Generating indicator (full-message batch mode) */
+.message-generating {
+  opacity: 0.7;
+}
+.message-generating .message-content {
+  display: none;
+}
+
+/* ========================================================
+   RESPONSIVE — TABLET (≤ 900px)
+======================================================== */
+@media (max-width: 900px) {
+  :root { --sidebar-w: 260px; }
+  .message { max-width: 90%; }
+  .messages { padding: 18px; gap: 16px; }
+  .modal { max-width: 90%; }
+  .form-row { gap: 12px; }
+}
