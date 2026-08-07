@@ -1,6 +1,6 @@
-# Gobbonet — Your Own Private AI Front End
+# GobboNet — Your Own Private AI Front End, Now With An Easily Downloaded .exe
 
-Gobbonet lets you run an AI chatbot **on your own computer**, with no accounts, no monthly fees, and nothing sent to the internet. The AI lives on your machine. When you talk to it, your words never leave your home.
+GobboNet lets you run an AI chatbot **on your own computer**, with no accounts, no monthly fees, and nothing sent to the internet. The AI lives on your machine. When you talk to it, your words never leave your home.
 
 This guide assumes you've never set up anything like this before. Take it one step at a time and you'll be chatting in about 20–30 minutes (most of that is just waiting for files to download).
 
@@ -34,11 +34,11 @@ You download the engine and a model **one time**. After that, everything runs of
 - **Free hard-drive space.** At least 10–20 GB free, ideally more. The AI models are large.
 - **An internet connection for the first setup only.** After the one-time downloads, you can unplug from the internet and it still works.
 
-You do **not** need to be technical, create any account, enter a credit card, or install anything complicated.
+You do **not** need to be technical, create any account, enter a credit card, or install anything complicated. Just downloading and running the exe from the released versions will do all of this for you.
 
 ---
 
-## Step 1 — Put the files in one folder
+## Alternative Download Method: Step 1 — Put the files in one folder
 
 Make a new folder somewhere easy to find, like `Documents\Gobbonet`. Put **all** of these files into it, together:
 
@@ -232,7 +232,7 @@ A handful of models are built on the Tekken tokenizer, and those don't run corre
 
 ## Full feature list
 
-Everything Gobbonet can do, grouped so it's easy to scan.
+Everything GobboNet can do, grouped so it's easy to scan.
 
 **Chatting**
 - Streaming responses — replies appear word-by-word in real time as the AI thinks.
@@ -259,10 +259,11 @@ Everything Gobbonet can do, grouped so it's easy to scan.
 - Default characters — comes with ready-made personalities to chat with right away.
 - Character cards — build your own detailed characters (name, description, personality, style, settings).
 - Import and export character cards (V2/V3) — bring in the standard `.png` character cards used by other popular AI chat apps, and export your own back out in the same format. Cards are cross-compatible both directions, so you don't have to recreate a library you already own. Honest note: most cards carry over cleanly, but some may need a little tweaking after import.
-- Lorebook import — embedded lorebooks come across with their underlying information preserved. Honest note: some extras like tags are dropped during import, but the actual lore content itself stays intact.
-- User controled RAG storybook
+- Lorebook import — embedded lorebooks come across with their underlying information preserved. Honest note: some extras like tags are dropped during import, but the actual lore content itself stays intact. Now fully exposed.
+- User controlled RAG storybook
 - Lorebook + Rag Storybook work together to auto update new information from extended conversations.
 - Copy, edit, or delete characters.
+- Custom code for individual character cards
 - Alternate greetings — give a character several different opening lines.
 - User personas — create a profile for *yourself* so the AI knows who it's talking to.
 - Avatar, background, and text-color customization — make each character and the chat look the way you want.
@@ -302,4 +303,4 @@ Everything Gobbonet can do, grouped so it's easy to scan.
 
 ---
 
-*Gobbonet is brought to you by the GoblinCorps. No corpo money, no venture capital, no masters.*
+*GobboNet is brought to you by the GoblinCorps. No corpo money, no venture capital, no masters.*
